@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -71,7 +72,7 @@ def plot_fit(
             if annotate:
                 ax.annotate(
                     f"{c.center:.2f}",
-                    (c.center, c.height + bg[abs(x - c.center).argmin()]),
+                    (c.center, c.height + bg[int(np.argmin(np.abs(x - c.center)))]),
                     textcoords="offset points",
                     xytext=(0, 4),
                     ha="center",

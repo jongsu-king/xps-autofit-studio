@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 if TYPE_CHECKING:
     from .fitting import Component, FitResult
 
@@ -190,7 +192,7 @@ def check_physical(
         if noise_sigma is not None and noise_sigma > 0:
             local = float(noise_sigma)
             if result.sigma is not None:
-                idx = int(abs(result.x - c.center).argmin())
+                idx = int(np.argmin(np.abs(result.x - c.center)))
                 local = max(local, float(result.sigma[idx]))
             ratio = c.height / local
             if ratio < k:
