@@ -78,13 +78,14 @@ def _blocks(lines: list[str], delimiter: str) -> list[tuple[list[str] | None, np
     width = 0
 
     def close() -> None:
-        nonlocal rows, header
+        nonlocal rows, header, last_text
         if len(rows) >= 5:
             w = min(len(r) for r in rows)
             arr = np.array([r[:w] for r in rows], dtype=float)
             blocks.append((header, arr))
         rows = []
         header = None
+        last_text = None  # a header line belongs to the block it precedes only
 
     for ln in lines:
         n = _numeric_count(ln, delimiter)
