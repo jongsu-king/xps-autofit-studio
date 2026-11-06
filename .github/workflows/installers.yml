@@ -81,7 +81,7 @@ jobs:
           XPS_AUTOFIT_SMOKE=1 QT_QPA_PLATFORM=offscreen "$APP/XPS AutoFit Studio"
 
       # ---- packaging
-      - name: Package (Windows: Inno Setup installer + zip)
+      - name: "Package (Windows: Inno Setup installer + zip)"
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -90,10 +90,10 @@ jobs:
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" "/DSourceDir=$PWD\dist\XPS AutoFit Studio" "/DOutputDir=$PWD\installers" packaging\windows_installer.iss
           Compress-Archive -Path "dist\XPS AutoFit Studio" -DestinationPath "installers\XPS-AutoFit-Studio-$v-Windows-x64.zip" -CompressionLevel Optimal
           Get-ChildItem installers | ForEach-Object { "$($_.Name) $($_.Length) bytes" }
-      - name: Package (macOS: DMG)
+      - name: "Package (macOS: DMG)"
         if: runner.os == 'macOS'
         run: packaging/build_mac_dmg.sh "${{ steps.ver.outputs.version }}" installers
-      - name: Package (Linux: deb + tar.gz)
+      - name: "Package (Linux: deb + tar.gz)"
         if: runner.os == 'Linux'
         run: packaging/build_linux_deb.sh "${{ steps.ver.outputs.version }}" installers
       - name: Install-test the installer (Windows, silent)
