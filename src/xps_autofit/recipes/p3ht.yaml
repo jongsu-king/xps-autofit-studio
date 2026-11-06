@@ -1,0 +1,60 @@
+# P3HT (poly(3-hexylthiophene)) films: C 1s and S 2p.
+# Candidate positions are typical literature values; verify against your own references.
+name: p3ht
+description: P3HT thin films - thiophene S 2p doublet, sulfur oxidation, C 1s environments
+photon_energy: 1486.6
+charge_reference:
+  region: C 1s
+  component: C-C/C-H
+  value: 284.8
+  note: >
+    Adventitious-carbon referencing is a convention. The program applies it only when
+    asked and prints a warning; compare samples measured under the same conditions.
+references:
+  - NIST XPS Database (SRD 20)
+  - Greczynski & Hultman, Prog. Mater. Sci. 107, 100591 (2020) - C 1s referencing
+regions:
+  - name: C 1s
+    element: C
+    line: 1s
+    range: [281.0, 292.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.6, 2.0]
+      fwhm_l: [0.05, 0.5]
+      share_fwhm_l: true
+      min_separation: 0.6
+    candidates:
+      - {label: C-C/C-H, center: 284.8, window: 0.6}
+      - {label: C-S/C-N, center: 285.6, window: 0.4}
+      - {label: C-O, center: 286.4, window: 0.5}
+      - {label: C=O, center: 287.9, window: 0.5}
+      - {label: O-C=O, center: 288.9, window: 0.6}
+    min_components: 1
+    max_components: 4
+    rsf: 1.000
+  - name: S 2p
+    element: S
+    line: 2p
+    range: [160.0, 172.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.5, 1.8]
+      fwhm_l: [0.05, 0.5]
+      share_fwhm_l: true
+      min_separation: 0.5
+    doublet:
+      splitting: 1.18
+      splitting_tolerance: 0.02
+      area_ratio: 0.5
+      ratio_tolerance: 0.0
+    candidates:
+      - {label: thiophene C-S-C, center: 164.0, window: 0.5}
+      - {label: sulfoxide/sulfone, center: 166.6, window: 0.9}
+      - {label: sulfonate/sulfate, center: 168.5, window: 1.0}
+    min_components: 1
+    max_components: 3
+    rsf: 1.677
+    rsf_applies_to: total

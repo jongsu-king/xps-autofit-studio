@@ -1,0 +1,80 @@
+# Cu2O / CuO films: Cu 2p3/2 with satellites, Cu LMM for the Auger parameter, O 1s.
+# Cu(0) and Cu(I) cannot be separated from Cu 2p3/2 alone (Biesinger 2017); the
+# Cu LMM region is reported as a maximum position and combined into alpha'.
+name: cu2o
+description: Copper oxide films - Cu 2p3/2 states and satellites, Cu LMM Auger parameter, O 1s
+photon_energy: 1486.6
+charge_reference:
+  region: C 1s
+  component: C-C/C-H
+  value: 284.8
+  note: applied only when a C 1s region is present in the file
+references:
+  - M. C. Biesinger, Surf. Interface Anal. 49, 1325 (2017)
+regions:
+  - name: Cu 2p3/2
+    element: Cu
+    line: 2p3/2
+    range: [926.0, 948.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.7, 2.2]
+      fwhm_l: [0.1, 0.8]
+      share_fwhm_l: true
+      min_separation: 0.6
+    candidates:
+      - {label: Cu(0)/Cu(I), center: 932.5, window: 0.6, note: resolve with Cu LMM}
+      - {label: Cu(II) CuO, center: 933.7, window: 0.5}
+      - {label: Cu(II) Cu(OH)2, center: 934.9, window: 0.5}
+      - {label: satellite A, center: 941.0, window: 1.3, fwhm_g: [1.5, 4.5]}
+      - {label: satellite B, center: 943.8, window: 1.2, fwhm_g: [1.5, 4.5]}
+    min_components: 1
+    max_components: 5
+    rsf: 16.73
+  - name: Cu LMM
+    element: Cu
+    line: LMM
+    # Binding-energy window for Al K-alpha: KE 912-922 eV -> BE 564.6-574.6 eV
+    range: [562.0, 576.0]
+    fit: false
+    report: auger_max
+    auger_pair: Cu 2p3/2
+    notes: >
+      Reported as the kinetic energy of the smoothed maximum and as the modified Auger
+      parameter alpha' = BE(Cu 2p3/2 main) + KE(Cu LMM). Reference values: Cu 1851.2,
+      Cu2O 1849.2, CuO 1851.5 eV (Biesinger 2017).
+  - name: O 1s
+    element: O
+    line: 1s
+    range: [526.0, 537.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.7, 2.2]
+      fwhm_l: [0.05, 0.5]
+      share_fwhm_l: true
+      min_separation: 0.7
+    candidates:
+      - {label: lattice O2-, center: 530.0, window: 0.6}
+      - {label: OH/defect O, center: 531.5, window: 0.6}
+      - {label: C-O/H2O, center: 532.9, window: 0.8}
+    min_components: 1
+    max_components: 3
+    rsf: 2.93
+  - name: C 1s
+    element: C
+    line: 1s
+    range: [281.0, 292.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.6, 2.0]
+      fwhm_l: [0.05, 0.5]
+      min_separation: 0.6
+    candidates:
+      - {label: C-C/C-H, center: 284.8, window: 0.6}
+      - {label: C-O, center: 286.4, window: 0.6}
+      - {label: O-C=O, center: 288.8, window: 0.7}
+    max_components: 3
+    rsf: 1.000

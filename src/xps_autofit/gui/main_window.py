@@ -1,0 +1,580 @@
+"""Main window: sample tree | live plot | fit settings and tables, with a status lamp."""
+
+from __future__ import annotations
+
+import traceback
+from collections.abc import Sequence
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import (
+    QDockWidget,
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QScrollArea,
+    QSplitter,
+    QTabWidget,
+    QToolBar,
+    QWidget,
+)
+
+from .. import __version__
+from ..automation.batch_fitting import RunOptions, run_batch, write_region_outputs
+from ..automation.model_selection import select_model
+from ..automation.peak_detection import residual_peak
+from ..core.constraints import check_physical
+from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_result
+from ..readers import supported_extensions
+from ..recipes import builtin_recipe_names, load_recipe
+from .dialogs import BatchDialog, ExportDialog, TableDialog
+from .panels import ComponentsTable, FitSettingsPanel, LogPanel, ModelTable, SampleTree, StatusLamp
+from .plot_widget import SpectrumPlot
+from .session import RegionState, Session
+from .workers import JobRunner
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, synchronous_jobs: bool = False) -> None:
+        super().__init__()
+        self.setWindowTitle(f"XPS AutoFit Studio  {__version__}")
+        self.resize(1480, 900)
+        self.session = Session()
+        self.runner = JobRunner(self, synchronous=synchronous_jobs)
+        self.settings_store = QSettings("xps-autofit", "studio")
+        self._current_key: str | None = None
+
+        # ---- central plot
+        self.plot = SpectrumPlot()
+        self.setCentralWidget(self.plot)
+
+        # ---- left dock: samples
+        self.tree = SampleTree()
+        self._dock("SAMPLES", self.tree, Qt.DockWidgetArea.LeftDockWidgetArea, 420)
+
+        # ---- right dock: settings + tables
+        self.settings = FitSettingsPanel()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.settings)
+        self.components = ComponentsTable()
+        self.models = ModelTable()
+        tabs = QTabWidget()
+        tabs.addTab(self.components, "Components")
+        tabs.addTab(self.models, "Models")
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(scroll)
+        splitter.addWidget(tabs)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([430, 380])
+        self._dock("FIT SETTINGS", splitter, Qt.DockWidgetArea.RightDockWidgetArea, 430)
+
+        # ---- bottom dock: log
+        self.log_panel = LogPanel()
+        self._dock("LOG", self.log_panel, Qt.DockWidgetArea.BottomDockWidgetArea, 0, height=120)
+
+        # ---- toolbar, menus, status bar
+        self._build_toolbar()
+        self._build_menus()
+        self.lamp = StatusLamp()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setVisible(False)
+        self.progress.setMaximumWidth(140)
+        self.status_text = QLabel("Open a spectrum to begin")
+        self.statusBar().addWidget(self.lamp)
+        self.statusBar().addWidget(self.status_text, 1)
+        self.statusBar().addPermanentWidget(self.progress)
+
+        # ---- wiring
+        self.session.spectraChanged.connect(self._refresh_tree)
+        self.session.resultChanged.connect(self._on_result_changed)
+        self.session.message.connect(self.log)
+        self.tree.spectrumSelected.connect(self.select_key)
+        self.plot.centerDragged.connect(self._on_center_dragged)
+        self.components.componentEdited.connect(self._on_component_edited)
+        self.models.modelPicked.connect(self._show_model)
+        self.settings.recipe_combo.currentIndexChanged.connect(self._on_recipe_combo)
+        self.runner.started.connect(self._job_started)
+        self.runner.stopped.connect(self._job_stopped)
+        self.settings.set_recipes(builtin_recipe_names())
+        self.log(
+            f"XPS AutoFit Studio {__version__} ready. Formats: {', '.join(supported_extensions())}"
+        )
+
+    # ------------------------------------------------------------------ layout
+    def _dock(
+        self, title: str, widget: QWidget, area: Qt.DockWidgetArea, width: int, height: int = 0
+    ) -> QDockWidget:
+        dock = QDockWidget(title, self)
+        dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable)
+        dock.setWidget(widget)
+        if width:
+            widget.setMinimumWidth(width)
+        if height:
+            widget.setMinimumHeight(height)
+        self.addDockWidget(area, dock)
+        return dock
+
+    def _build_toolbar(self) -> None:
+        bar = QToolBar("Main")
+        bar.setMovable(False)
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.addToolBar(bar)
+        self.act_open = QAction("Open files…", self)
+        self.act_open.setShortcut(QKeySequence.StandardKey.Open)
+        self.act_open.triggered.connect(self.open_files_dialog)
+        self.act_open_folder = QAction("Open folder…", self)
+        self.act_open_folder.triggered.connect(self.open_folder_dialog)
+        self.act_fit = QAction("AUTO FIT", self)
+        self.act_fit.setShortcut("F5")
+        self.act_fit.triggered.connect(lambda: self.auto_fit())
+        self.act_refit = QAction("REFIT", self)
+        self.act_refit.setShortcut("F6")
+        self.act_refit.triggered.connect(lambda: self.refit())
+        self.act_add = QAction("+ Component", self)
+        self.act_add.triggered.connect(self.add_component)
+        self.act_remove = QAction("- Component", self)
+        self.act_remove.triggered.connect(self.remove_component)
+        self.act_batch = QAction("BATCH", self)
+        self.act_batch.setShortcut("Ctrl+B")
+        self.act_batch.triggered.connect(self.batch_dialog)
+        self.act_export = QAction("EXPORT", self)
+        self.act_export.setShortcut("Ctrl+E")
+        self.act_export.triggered.connect(self.export_dialog)
+        for a in (self.act_open, self.act_open_folder):
+            bar.addAction(a)
+        bar.addSeparator()
+        for a in (self.act_fit, self.act_refit, self.act_add, self.act_remove):
+            bar.addAction(a)
+        bar.addSeparator()
+        for a in (self.act_batch, self.act_export):
+            bar.addAction(a)
+        for a in (self.act_fit, self.act_batch):
+            w = bar.widgetForAction(a)
+            if w is not None:
+                w.setObjectName("primary")
+        self.toolbar = bar
+
+    def _build_menus(self) -> None:
+        m_file = self.menuBar().addMenu("&File")
+        m_file.addAction(self.act_open)
+        m_file.addAction(self.act_open_folder)
+        m_file.addSeparator()
+        m_file.addAction(self.act_export)
+        m_file.addSeparator()
+        quit_action = QAction("Quit", self)
+        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        quit_action.triggered.connect(self.close)
+        m_file.addAction(quit_action)
+        m_an = self.menuBar().addMenu("&Analysis")
+        for a in (self.act_fit, self.act_refit, self.act_add, self.act_remove, self.act_batch):
+            m_an.addAction(a)
+        m_help = self.menuBar().addMenu("&Help")
+        about = QAction("About", self)
+        about.triggered.connect(
+            lambda: QMessageBox.about(
+                self,
+                "XPS AutoFit Studio",
+                f"XPS AutoFit Studio {__version__}\nAutomated, reproducible XPS peak fitting.\n"
+                "Engine: NumPy, SciPy, lmfit. Interface: PySide6, PyQtGraph.",
+            )
+        )
+        m_help.addAction(about)
+
+    # ------------------------------------------------------------------ logging
+    def log(self, text: str) -> None:
+        self.log_panel.log(text)
+        self.status_text.setText(text.splitlines()[0][:160])
+
+    def _job_started(self, label: str) -> None:
+        self.progress.setVisible(True)
+        self.lamp.set_state("running", f"RUNNING: {label.upper()}")
+        for a in (self.act_fit, self.act_refit, self.act_batch, self.act_export):
+            a.setEnabled(False)
+
+    def _job_stopped(self) -> None:
+        self.progress.setVisible(False)
+        for a in (self.act_fit, self.act_refit, self.act_batch, self.act_export):
+            a.setEnabled(True)
+        if self.lamp.state == "running":
+            self.lamp.set_state("idle")
+
+    def _error(self, text: str) -> None:
+        self.lamp.set_state("error")
+        self.log("error: " + text.strip().splitlines()[-1])
+        self.log_panel.log(text)
+
+    # ------------------------------------------------------------------ files
+    def open_files_dialog(self) -> None:
+        pats = " ".join(f"*{e}" for e in supported_extensions())
+        start = self.settings_store.value("last_dir", str(Path.home()))
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Open spectra", str(start), f"Spectra ({pats});;All files (*)"
+        )
+        if paths:
+            self.settings_store.setValue("last_dir", str(Path(paths[0]).parent))
+            self.load_files(paths)
+
+    def open_folder_dialog(self) -> None:
+        start = self.settings_store.value("last_dir", str(Path.home()))
+        d = QFileDialog.getExistingDirectory(self, "Open folder with spectra", str(start))
+        if d:
+            self.settings_store.setValue("last_dir", d)
+            exts = set(supported_extensions())
+            self.load_files([str(p) for p in sorted(Path(d).iterdir()) if p.suffix.lower() in exts])
+
+    def load_files(self, paths: Sequence[str | Path]) -> list[str]:
+        keys = self.session.load_paths(list(paths))
+        if keys and self._current_key is None:
+            self.tree.select_key(keys[0])
+        return keys
+
+    def _refresh_tree(self) -> None:
+        items = [self.session.items[k] for k in self.session.order]
+        status = {k: st.status for k, st in self.session.results.items()}
+        self.tree.populate(items, status)
+
+    # ------------------------------------------------------------------ selection
+    def select_key(self, key: str) -> None:
+        item = self.session.items.get(key)
+        if item is None:
+            return
+        self._current_key = key
+        spectrum = item.spectrum
+        self.settings.set_range(*spectrum.range)
+        self.settings.select_region_for(spectrum)
+        state = self.session.results.get(key)
+        if state is not None and state.result is not None:
+            self._display_state(key, state)
+        else:
+            self.plot.show_spectrum(spectrum, item.display_name)
+            self.components.show_result(None)
+            self.models.show_selection(None)
+            self.lamp.set_state("idle")
+        self.tree.select_key(key)
+
+    def current(self) -> tuple[str, Any] | None:
+        if self._current_key is None:
+            return None
+        item = self.session.items.get(self._current_key)
+        return (self._current_key, item) if item is not None else None
+
+    def _on_recipe_combo(self, _index: int) -> None:
+        name = self.settings.recipe_combo.currentData()
+        recipe = load_recipe(str(name)) if name else None
+        self.session.recipe = recipe
+        self.settings.set_recipe(recipe)
+        cur = self.current()
+        if cur is not None:
+            self.settings.select_region_for(cur[1].spectrum)
+        self.log(f"recipe: {recipe.name if recipe else 'manual settings'}")
+
+    def use_recipe(self, name: str) -> None:
+        idx = self.settings.recipe_combo.findData(name)
+        if idx >= 0:
+            self.settings.recipe_combo.setCurrentIndex(idx)
+
+    # ------------------------------------------------------------------ fitting
+    def auto_fit(self) -> bool:
+        cur = self.current()
+        if cur is None:
+            self.log("select a spectrum first")
+            return False
+        key, item = cur
+        region = self.settings.region_spec(item.spectrum)
+        spectrum = item.spectrum
+
+        def job() -> Any:
+            return select_model(spectrum, region)
+
+        def done(sel: Any) -> None:
+            self.session.set_selection(key, sel)
+            n = sel.best.n_components if sel.best else 0
+            self.log(f"{item.display_name}: {sel.status}, n={n}, " + "; ".join(sel.notes[:2]))
+
+        return self.runner.start(job, done, self._error, label=f"auto fit {region.name}")
+
+    def _manual_specs(self, key: str) -> tuple[RegionState, list[ComponentSpec]] | None:
+        state = self.session.results.get(key)
+        if state is None or state.result is None or state.selection is None:
+            self.log("run AUTO FIT first; manual edits refine an automatic result")
+            return None
+        return state, specs_from_result(state.result)
+
+    def refit(self, specs: list[ComponentSpec] | None = None) -> bool:
+        cur = self.current()
+        if cur is None:
+            return False
+        key, item = cur
+        pair = self._manual_specs(key)
+        if pair is None:
+            return False
+        state, current_specs = pair
+        specs = specs or current_specs
+        sel = state.selection
+        assert sel is not None
+        settings = (
+            replace(sel.best.result.settings, optimizer="leastsq")
+            if sel.best
+            else sel.region.fit_settings()
+        )
+        for s in specs:  # widen centre windows to include dragged positions
+            if s.center_bounds is not None and not (
+                s.center_bounds[0] <= s.center <= s.center_bounds[1]
+            ):
+                s.center_bounds = (
+                    min(s.center_bounds[0], s.center - 0.3),
+                    max(s.center_bounds[1], s.center + 0.3),
+                )
+
+        background = sel.best.result.background if sel.best else sel.background
+
+        def job() -> FitResult:
+            return fit_peaks(sel.spectrum, specs, settings, background=background)
+
+        def done(result: FitResult) -> None:
+            violations, warnings = check_physical(
+                result,
+                sel.region.constraints,
+                sel.spectrum.range,
+                sel.region.candidate_windows or None,
+                False,
+                sel.noise.sigma,
+            )
+            notes = [v.message for v in violations + warnings]
+            self.session.set_manual(key, result, notes)
+            st = result.stats
+            self.log(
+                f"manual refit: reduced chi-sq {st.redchi:.3g}, AICc {st.aicc:.1f}"
+                + (f"; {notes[0]}" if notes else "")
+            )
+
+        return self.runner.start(job, done, self._error, label="refit")
+
+    def _on_center_dragged(self, label: str, energy: float) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        pair = self._manual_specs(cur[0])
+        if pair is None:
+            return
+        _state, specs = pair
+        for s in specs:
+            if s.label == label:
+                s.center = energy
+        self.log(f"{label}: centre moved to {energy:.3f} eV")
+        if self.settings.auto_refit.isChecked():
+            self.refit(specs)
+
+    def _on_component_edited(self, label: str, field: str, value: float) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        pair = self._manual_specs(cur[0])
+        if pair is None:
+            return
+        _state, specs = pair
+        for s in specs:
+            if s.label == label:
+                setattr(s, field, value)
+        self.refit(specs)
+
+    def add_component(self) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        pair = self._manual_specs(cur[0])
+        if pair is None:
+            return
+        state, specs = pair
+        result = state.result
+        sel = state.selection
+        assert result is not None and sel is not None
+        c = sel.region.constraints
+        guess = residual_peak(
+            result.x,
+            result.residual,
+            1.0,
+            [s.center for s in specs],
+            c.min_separation,
+            c.edge_margin,
+        )
+        center = guess.center if guess is not None else float(result.x[len(result.x) // 2])
+        n = len(specs) + 1
+        new = ComponentSpec(
+            label=f"{sel.region.name} #{n}",
+            center=center,
+            area=max(result.y_net.max(), 1.0) * 0.1,
+            doublet=sel.region.doublet,
+        )
+        new.fwhm_g = float(sum(s.fwhm_g for s in specs) / len(specs))
+        new.fwhm_l = specs[0].fwhm_l
+        self.log(f"added component at {center:.2f} eV")
+        self.refit(specs + [new])
+
+    def remove_component(self) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        pair = self._manual_specs(cur[0])
+        if pair is None:
+            return
+        _state, specs = pair
+        label = self.components.selected_parent()
+        if label is None or len(specs) < 2:
+            self.log("select a component row to remove (at least one must remain)")
+            return
+        specs = [s for s in specs if s.label != label]
+        self.log(f"removed {label}")
+        self.refit(specs)
+
+    def _show_model(self, n: int) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        state = self.session.results.get(cur[0])
+        if state is None or state.selection is None:
+            return
+        for cand in state.selection.candidates:
+            if cand.n_components == n:
+                self.plot.show_result(
+                    cand.result, f"{cur[1].display_name} - candidate n={n}", draggable=False
+                )
+                self.components.show_result(cand.result)
+                return
+
+    # ------------------------------------------------------------------ display
+    def _on_result_changed(self, key: str) -> None:
+        state = self.session.results[key]
+        self.tree.set_status(key, state.status)
+        if key == self._current_key:
+            self._display_state(key, state)
+
+    def _display_state(self, key: str, state: RegionState) -> None:
+        item = self.session.items[key]
+        result = state.result
+        if result is None:
+            return
+        sel = state.selection
+        n = len(result.majors())
+        title = f"{item.display_name} - {sel.region.name if sel else ''} (n={n}, {state.status})"
+        self.plot.show_result(result, title)
+        self.components.show_result(result)
+        self.models.show_selection(sel)
+        self.lamp.set_state(state.status)
+
+    # ------------------------------------------------------------------ export / batch
+    def export_dialog(self) -> None:
+        cur = self.current()
+        if cur is None:
+            self.log("nothing to export")
+            return
+        fallback = str(cur[1].path.parent / "xps_autofit_results")
+        default = Path(str(self.settings_store.value("export_dir", fallback)))
+        dlg = ExportDialog(default, self)
+        if dlg.exec() != ExportDialog.DialogCode.Accepted:
+            return
+        v = dlg.values()
+        self.settings_store.setValue("export_dir", str(v["output_dir"]))
+        self.export_current(v["output_dir"], v["formats"], v["bootstrap"])
+
+    def export_current(
+        self, output_dir: Path, formats: tuple[str, ...], bootstrap: int = 0
+    ) -> bool:
+        cur = self.current()
+        if cur is None:
+            return False
+        key, item = cur
+        state = self.session.results.get(key)
+        sel = state.as_selection() if state is not None else None
+        if sel is None or sel.best is None:
+            self.log("fit the spectrum before exporting")
+            return False
+        best = sel.best
+        options = RunOptions(Path(output_dir), formats=tuple(formats), bootstrap=bootstrap)
+        spectrum = item.spectrum
+        path = item.path
+
+        def job() -> dict[str, str]:
+            extra: dict[str, Any] = {"status": sel.status}
+            if bootstrap > 0:
+                from ..core.uncertainty import bootstrap as run_bootstrap
+
+                extra["bootstrap"] = run_bootstrap(
+                    sel.spectrum, best.result, n=bootstrap, seed=sel.seed
+                ).to_dict()
+            return write_region_outputs(path, spectrum, sel, options, extra)
+
+        def done(outputs: dict[str, str]) -> None:
+            for fmt, p in outputs.items():
+                self.log(f"exported {fmt}: {p}")
+            self.lamp.set_state(state.status if state else "ok")
+
+        return self.runner.start(job, done, self._error, label="export")
+
+    def batch_dialog(self) -> None:
+        default = Path(str(self.settings_store.value("last_dir", str(Path.home()))))
+        dlg = BatchDialog(default, self)
+        dlg.add_paths(sorted({str(it.path) for it in self.session.items.values()}))
+        if self.session.recipe is not None:
+            idx = dlg.recipe.findData(self.session.recipe.name)
+            if idx >= 0:
+                dlg.recipe.setCurrentIndex(idx)
+        if dlg.exec() != BatchDialog.DialogCode.Accepted:
+            return
+        v = dlg.values()
+        self.run_batch(
+            v["paths"],
+            v["recipe"],
+            v["output_dir"],
+            v["formats"],
+            v["charge_correct"],
+            v["regions"],
+        )
+
+    def run_batch(
+        self,
+        paths: list[str],
+        recipe_name: str,
+        output_dir: Path,
+        formats: tuple[str, ...],
+        charge_correct: bool = True,
+        regions: list[str] | None = None,
+    ) -> bool:
+        try:
+            recipe = load_recipe(recipe_name)
+        except Exception:
+            self._error(traceback.format_exc())
+            return False
+        options = RunOptions(
+            Path(output_dir),
+            formats=tuple(formats),
+            charge_correct=charge_correct,
+            region_filter=regions,
+        )
+
+        def job() -> Any:
+            return run_batch(paths, recipe, options)
+
+        def done(batch: Any) -> None:
+            n_regions = sum(len(f.regions) for f in batch.files)
+            self.log(
+                f"batch: {len(batch.files)} files, {n_regions} regions, "
+                f"{batch.n_ok} ok -> {output_dir}"
+            )
+            summary = batch.summary_paths.get("summary_regions")
+            frame = pd.read_csv(summary) if summary and Path(summary).exists() else pd.DataFrame()
+            self.lamp.set_state("ok", "BATCH DONE")
+            self._last_batch = (frame, Path(output_dir))
+            if not self.runner.synchronous:
+                TableDialog("Batch summary", frame, Path(output_dir), self).exec()
+
+        return self.runner.start(job, done, self._error, label=f"batch ({len(paths)} inputs)")

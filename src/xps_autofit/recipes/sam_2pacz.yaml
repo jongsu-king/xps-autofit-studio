@@ -1,0 +1,81 @@
+# Carbazole-phosphonic-acid SAMs (e.g. 2PACz) on oxide surfaces: P 2p, N 1s, C 1s, O 1s.
+name: sam_2pacz
+description: Phosphonic-acid SAM formation - P 2p anchor, carbazole N 1s, C 1s and O 1s
+photon_energy: 1486.6
+charge_reference:
+  region: C 1s
+  component: C-C/C-H
+  value: 284.8
+references:
+  - NIST XPS Database (SRD 20)
+regions:
+  - name: P 2p
+    element: P
+    line: 2p
+    range: [127.0, 140.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.6, 2.0]
+      fwhm_l: [0.05, 0.4]
+      share_fwhm_l: true
+      min_separation: 0.6
+    doublet:
+      splitting: 0.84
+      splitting_tolerance: 0.02
+      area_ratio: 0.5
+    candidates:
+      - {label: phosphonate P-O, center: 133.3, window: 0.8}
+      - {label: phosphide / P-C, center: 129.6, window: 0.8}
+    max_components: 2
+    rsf: 1.192
+    rsf_applies_to: total
+  - name: N 1s
+    element: N
+    line: 1s
+    range: [395.0, 406.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.7, 2.2]
+      fwhm_l: [0.05, 0.5]
+      min_separation: 0.7
+    candidates:
+      - {label: carbazole N, center: 400.0, window: 0.6}
+      - {label: protonated N, center: 401.9, window: 0.7}
+    max_components: 2
+    rsf: 1.800
+  - name: C 1s
+    element: C
+    line: 1s
+    range: [281.0, 292.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.6, 2.0]
+      fwhm_l: [0.05, 0.5]
+      share_fwhm_l: true
+      min_separation: 0.6
+    candidates:
+      - {label: C-C/C-H, center: 284.8, window: 0.6}
+      - {label: C-N/C-P, center: 285.7, window: 0.4}
+      - {label: C-O, center: 286.5, window: 0.5}
+      - {label: O-C=O, center: 288.8, window: 0.7}
+    max_components: 4
+    rsf: 1.000
+  - name: O 1s
+    element: O
+    line: 1s
+    range: [526.0, 537.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.7, 2.2]
+      fwhm_l: [0.05, 0.5]
+      min_separation: 0.7
+    candidates:
+      - {label: lattice O2-, center: 530.0, window: 0.6}
+      - {label: P-O / OH, center: 531.6, window: 0.7}
+      - {label: C-O/H2O, center: 532.9, window: 0.8}
+    max_components: 3
+    rsf: 2.93

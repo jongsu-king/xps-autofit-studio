@@ -1,0 +1,86 @@
+# CuBi2O4 (CBO): Cu 2p3/2, Bi 4f doublet, O 1s. Bi 4f RSF is left empty on purpose:
+# supply the value from your instrument library (quantification is then reported as
+# NOT_CALCULABLE rather than with a guessed factor).
+name: cbo
+description: CuBi2O4 films - Cu and Bi chemical states, composition when RSFs are supplied
+photon_energy: 1486.6
+charge_reference:
+  region: C 1s
+  component: C-C/C-H
+  value: 284.8
+references:
+  - M. C. Biesinger, Surf. Interface Anal. 49, 1325 (2017)
+  - NIST XPS Database (SRD 20)
+regions:
+  - name: Cu 2p3/2
+    element: Cu
+    line: 2p3/2
+    range: [926.0, 948.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.7, 2.2]
+      fwhm_l: [0.1, 0.8]
+      share_fwhm_l: true
+      min_separation: 0.6
+    candidates:
+      - {label: Cu(0)/Cu(I), center: 932.5, window: 0.6}
+      - {label: Cu(II), center: 933.8, window: 0.6}
+      - {label: satellite A, center: 941.0, window: 1.3, fwhm_g: [1.5, 4.5]}
+      - {label: satellite B, center: 943.8, window: 1.2, fwhm_g: [1.5, 4.5]}
+    max_components: 4
+    rsf: 16.73
+  - name: Bi 4f
+    element: Bi
+    line: 4f
+    range: [153.0, 170.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.5, 1.8]
+      fwhm_l: [0.05, 0.5]
+      share_fwhm_l: true
+      min_separation: 0.5
+    doublet:
+      splitting: 5.31
+      splitting_tolerance: 0.03
+      area_ratio: 0.75
+    candidates:
+      - {label: Bi(III) oxide, center: 159.0, window: 0.6}
+      - {label: Bi(0), center: 157.0, window: 0.4}
+    max_components: 2
+    rsf: null
+    rsf_applies_to: total
+    notes: Bi 4f RSF must come from the instrument library.
+  - name: O 1s
+    element: O
+    line: 1s
+    range: [526.0, 537.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.7, 2.2]
+      fwhm_l: [0.05, 0.5]
+      min_separation: 0.7
+    candidates:
+      - {label: lattice O2-, center: 529.8, window: 0.6}
+      - {label: OH/defect O, center: 531.4, window: 0.6}
+      - {label: C-O/H2O, center: 532.8, window: 0.8}
+    max_components: 3
+    rsf: 2.93
+  - name: C 1s
+    element: C
+    line: 1s
+    range: [281.0, 292.0]
+    background: {type: shirley}
+    shape: voigt
+    constraints:
+      fwhm_g: [0.6, 2.0]
+      fwhm_l: [0.05, 0.5]
+      min_separation: 0.6
+    candidates:
+      - {label: C-C/C-H, center: 284.8, window: 0.6}
+      - {label: C-O, center: 286.4, window: 0.6}
+      - {label: O-C=O, center: 288.8, window: 0.7}
+    max_components: 3
+    rsf: 1.000
