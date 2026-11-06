@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Packaging
+- Installers for every release, built and checked by the `Installers` workflow:
+  Windows x64 setup program (Inno Setup; optional PATH entry for the command-line
+  tool) and zip, macOS Apple-Silicon DMG, Debian/Ubuntu `.deb` and portable
+  tar.gz, with `SHA256SUMS.txt`. One PyInstaller folder holds both the desktop
+  application and `xps-autofit`; the launchers keep Matplotlib's font cache in a
+  per-user cache folder. Builds are not code-signed.
+
 ## [0.2.0] - 2026-11-06
 
 Phase 2: desktop application; stronger automatic fitting.

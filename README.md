@@ -26,6 +26,15 @@ desktop application built on the same engine - see the [roadmap](#roadmap).
 
 ## Installation
 
+**Installers** (no Python needed) are attached to every
+[release](https://github.com/jongsu-king/xps-autofit-studio/releases): a Windows
+setup program and zip, a macOS (Apple Silicon) DMG, and a Debian/Ubuntu `.deb` plus
+a portable tar.gz. Each contains the desktop application and the `xps-autofit`
+command-line tool. The builds are not code-signed; see `docs/installers.md` for the
+SmartScreen / Gatekeeper steps.
+
+From PyPI or the repository:
+
 ```bash
 pip install xps-autofit            # engine + command line
 pip install "xps-autofit[gui]"     # plus the desktop application (PySide6, PyQtGraph)
@@ -205,7 +214,7 @@ programs are part of the v1.0 plan and have not been done yet.
 | 1 | v0.1.0 | Fitting core, readers, Shirley/Tougaard, Voigt, doublets, model selection, CLI, exports |
 | 2 | v0.2.0 | PySide6 + PyQtGraph desktop app, interactive peak editing (this release) |
 | 3 | v0.5.0 | Element library, RSF libraries, comparison views for sample series |
-| 4 | v1.0.0 | Validation against real data and other software, installers |
+| 4 | v1.0.0 | Validation against real data and other software (installers already ship with every release) |
 | 5 | v2.0 | Depth profiling, PCA, large batches, model recommendation |
 
 ## 한국어 요약
