@@ -235,3 +235,17 @@ def test_registry_and_sniffing(tmp_path):
     assert read_spectra(q) == [] and called["path"] == q
     with pytest.raises(FileNotFoundError):
         read_spectra(tmp_path / "missing.csv")
+
+
+def test_text_block_without_header_does_not_inherit_previous_header(tmp_path):
+    def rows(start, n):
+        return "".join(f"{start - 0.1 * i:.1f},{100 + i}\n" for i in range(n))
+
+    path = tmp_path / "mixed.csv"
+    path.write_text("Kinetic Energy,CPS\n" + rows(1190, 10) + "\n" + rows(290, 10))
+    first, second = read_text(path)
+    assert first.metadata["header"] == ["Kinetic Energy", "CPS"]
+    assert second.metadata["header"] is None
+    assert second.intensity_unit != "cps"
+    assert second.energy.min() == pytest.approx(289.1)
+    assert second.energy.max() == pytest.approx(290.0)

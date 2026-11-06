@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Text reader: a numeric block without its own header no longer inherits the header of the previous block (which could mislabel its axis as kinetic or its unit as cps).
+
 ### Packaging
 - Installers for every release, built and checked by the `Installers` workflow:
   Windows x64 setup program (Inno Setup; optional PATH entry for the command-line
