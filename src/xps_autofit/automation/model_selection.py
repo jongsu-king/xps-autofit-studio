@@ -20,9 +20,9 @@ import numpy as np
 from ..core.background import BackgroundResult, compute_background
 from ..core.constraints import Violation, check_physical
 from ..core.fitting import ComponentSpec, FitError, FitResult, fit_peaks, specs_from_result
-from ..core.peak_shapes import SHAPES, area_from_height, evaluate
+from ..core.peak_shapes import GL_SHAPES, SHAPES, area_from_height, evaluate
 from ..core.preprocessing import NoiseReport, estimate_noise, smooth_for_detection
-from ..core.region import CandidateLine, RegionSpec
+from ..core.region import CandidateLine, RegionSpec, Variant
 from ..core.spectrum import Spectrum
 from .peak_detection import PeakGuess, detect_peaks, pair_doublets, residual_peak
 
@@ -37,19 +37,25 @@ class Candidate:
     criterion_value: float
     background_type: str = "shirley"
     shape: str = "voigt"
+    background_mode: str = "static"
 
     @property
     def physical_ok(self) -> bool:
         return not self.violations
 
     @property
+    def structured_residual(self) -> bool:
+        return any(w.code == "structured_residual" for w in self.warnings)
+
+    @property
     def variant(self) -> str:
-        return f"{self.background_type}/{self.shape}"
+        return Variant(self.background_type, self.shape, self.background_mode).label
 
     def to_dict(self, include_arrays: bool = False) -> dict[str, Any]:
         return {
             "n_components": self.n_components,
             "background_type": self.background_type,
+            "background_mode": self.background_mode,
             "shape": self.shape,
             "criterion": self.criterion,
             "criterion_value": self.criterion_value,
@@ -99,7 +105,7 @@ def derive_seed(spectrum_hash: str, region_name: str, user_seed: int | None) -> 
 def fwhm_hint_for(region: RegionSpec, shape: str | None = None) -> float:
     c = region.constraints
     shp = shape or region.shape
-    if shp == "voigt":
+    if shp in GL_SHAPES or shp == "auto":
         lo, hi = c.fwhm_g
     else:
         lo, hi = c.fwhm
@@ -108,10 +114,13 @@ def fwhm_hint_for(region: RegionSpec, shape: str | None = None) -> float:
 
 def _initial_widths(region: RegionSpec, fwhm_guess: float, shape: str) -> dict[str, float]:
     c = region.constraints
-    if shape == "voigt":
+    if shape in GL_SHAPES:
         fl = float(np.clip(0.2, *c.fwhm_l))
         fg = float(np.clip(0.9 * fwhm_guess, *c.fwhm_g))
-        return {"fwhm_g": fg, "fwhm_l": fl}
+        widths = {"fwhm_g": fg, "fwhm_l": fl}
+        if shape == "doniach_sunjic":
+            widths["asym"] = float(np.clip(0.05, *c.asym))
+        return widths
     if shape == "pseudo_voigt":
         return {"fwhm": float(np.clip(fwhm_guess, *c.fwhm)), "eta": float(np.clip(0.3, *c.eta))}
     return {"fwhm": float(np.clip(fwhm_guess, *c.fwhm))}
@@ -206,7 +215,7 @@ def _jitter(
         new.center = float(np.clip(s.center + rng.uniform(-0.3, 0.3) * fwhm_hint, cb[0], cb[1]))
         new.area = float(s.area * rng.uniform(0.7, 1.3))
         for w in SHAPES[shape].params:
-            if w == "eta":
+            if w in ("eta", "asym"):
                 continue
             bounds = s.fwhm_g_bounds if (w == "fwhm_g" and s.fwhm_g_bounds) else c.bounds(w)
             setattr(new, w, float(np.clip(getattr(s, w) * rng.uniform(0.8, 1.25), *bounds)))
@@ -322,26 +331,32 @@ def make_starts(
 def _fit_variant(
     spec: Spectrum,
     region: RegionSpec,
-    bg_type: str,
-    shape: str,
+    variant: Variant,
     base_seed: int,
     n_values: list[int],
     n_starts: int,
     crit: str,
     notes: list[str],
 ) -> tuple[list[Candidate], BackgroundResult, NoiseReport, list[PeakGuess]]:
-    settings = region.fit_settings(bg_type, shape)
+    bg_type, shape = variant.background_type, variant.shape
+    settings = region.fit_settings(bg_type, shape, variant.background_mode)
     bg = compute_background(spec.energy, spec.intensity, settings.background)
     y_net = spec.intensity - bg.values
     fwhm_hint = fwhm_hint_for(region, shape)
     noise = estimate_noise(spec.energy, y_net, fwhm_hint)
-    tag = f"{bg_type}/{shape}"
+    tag = variant.label
     for w in bg.warnings:
         notes.append(f"{tag}: {w}")
 
     n_detect = region.max_components * (2 if region.doublet else 1) + 2
     detected = detect_peaks(
-        spec.energy, y_net, noise.sigma, fwhm_hint, region.constraints.min_separation, n_detect
+        spec.energy,
+        y_net,
+        noise.sigma,
+        fwhm_hint,
+        region.constraints.min_separation,
+        n_detect,
+        sigma=spec.sigma,
     )
     if region.doublet is not None:
         d = region.doublet
@@ -396,6 +411,7 @@ def _fit_variant(
                 float(getattr(best.stats, crit)),
                 bg_type,
                 shape,
+                variant.background_mode,
             )
         )
         prev = best
@@ -433,12 +449,12 @@ def select_model(
 
     candidates: list[Candidate] = []
     per_variant: dict[str, tuple[BackgroundResult, NoiseReport, list[PeakGuess]]] = {}
-    for bg_type, shape in region.variants():
+    for variant in region.variants():
         cands, bg, noise, detected = _fit_variant(
-            spec, region, bg_type, shape, base_seed, n_values, n_starts, crit, notes
+            spec, region, variant, base_seed, n_values, n_starts, crit, notes
         )
         candidates.extend(cands)
-        per_variant[f"{bg_type}/{shape}"] = (bg, noise, detected)
+        per_variant[variant.label] = (bg, noise, detected)
 
     first = next(iter(per_variant.values()))
     if not candidates:
@@ -459,9 +475,12 @@ def choose(candidates: list[Candidate], min_improvement: float) -> tuple[Candida
 
     For each component count the best variant (background/shape) is taken.  Starting
     from the simplest valid model, a more complex one is adopted only when it lowers
-    the criterion by at least ``min_improvement``.  The result is ``ambiguous`` when
-    another valid model with a different number of components lies within that
-    margin; variants within the margin are reported in the notes.
+    the criterion by at least ``min_improvement``.  Within that margin the residual
+    decides: a model whose residual is white replaces one whose residual is
+    structured (Durbin-Watson warning) when it also has the lower criterion.  The
+    result is ``ambiguous`` when another valid model with a different number of
+    components lies within the margin and the residual does not separate them;
+    variants within the margin are reported in the notes.
     """
     notes: list[str] = []
     valid = [c for c in candidates if c.physical_ok]
@@ -478,6 +497,18 @@ def choose(candidates: list[Candidate], min_improvement: float) -> tuple[Candida
     chosen = ordered[0]
     for cand in ordered[1:]:
         if cand.criterion_value <= chosen.criterion_value - min_improvement:
+            chosen = cand
+        elif (
+            cand.criterion_value < chosen.criterion_value
+            and chosen.structured_residual
+            and not cand.structured_residual
+        ):
+            notes.append(
+                f"n={cand.n_components} adopted over n={chosen.n_components}: the criterion "
+                f"gap is below {min_improvement:g} but the simpler model leaves a structured "
+                f"residual (Durbin-Watson {chosen.result.stats.durbin_watson:.2f}) and the "
+                f"richer one does not ({cand.result.stats.durbin_watson:.2f})"
+            )
             chosen = cand
     crit = chosen.criterion.upper()
     close_n = [
@@ -497,6 +528,9 @@ def choose(candidates: list[Candidate], min_improvement: float) -> tuple[Candida
             f"{c.variant} is within {abs(c.criterion_value - chosen.criterion_value):.2f} {crit} "
             f"of {chosen.variant} at n={chosen.n_components}; {chosen.variant} is reported"
         )
+    # A close model whose residual is structured while the chosen one is white is not a
+    # real alternative; it does not make the result ambiguous.
+    close_n = [c for c in close_n if not (c.structured_residual and not chosen.structured_residual)]
     if close_n:
         other = min(close_n, key=lambda c: c.criterion_value)
         notes.append(

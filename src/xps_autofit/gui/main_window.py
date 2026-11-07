@@ -14,6 +14,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -31,13 +32,24 @@ from ..automation.model_selection import select_model
 from ..automation.peak_detection import residual_peak
 from ..core.constraints import check_physical
 from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_result
+from ..core.uncertainty import BootstrapResult, bootstrap
 from ..readers import supported_extensions
 from ..recipes import builtin_recipe_names, load_recipe
 from .dialogs import BatchDialog, ExportDialog, TableDialog
-from .panels import ComponentsTable, FitSettingsPanel, LogPanel, ModelTable, SampleTree, StatusLamp
+from .panels import (
+    ComponentsTable,
+    DiagnosticsPanel,
+    FitSettingsPanel,
+    LogPanel,
+    ModelTable,
+    SampleTree,
+    StatusLamp,
+)
 from .plot_widget import SpectrumPlot
 from .session import RegionState, Session
 from .workers import JobRunner
+
+MAX_RECENT = 12
 
 
 class MainWindow(QMainWindow):
@@ -45,6 +57,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"XPS AutoFit Studio  {__version__}")
         self.resize(1480, 900)
+        self.setAcceptDrops(True)
         self.session = Session()
         self.runner = JobRunner(self, synchronous=synchronous_jobs)
         self.settings_store = QSettings("xps-autofit", "studio")
@@ -65,9 +78,12 @@ class MainWindow(QMainWindow):
         scroll.setWidget(self.settings)
         self.components = ComponentsTable()
         self.models = ModelTable()
+        self.diagnostics = DiagnosticsPanel()
         tabs = QTabWidget()
         tabs.addTab(self.components, "Components")
         tabs.addTab(self.models, "Models")
+        tabs.addTab(self.diagnostics, "Diagnostics")
+        self.tabs = tabs
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(scroll)
         splitter.addWidget(tabs)
@@ -89,8 +105,12 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.progress.setMaximumWidth(140)
         self.status_text = QLabel("Open a spectrum to begin")
+        self.cursor_label = QLabel("")
+        self.cursor_label.setObjectName("cursor")
+        self.cursor_label.setMinimumWidth(230)
         self.statusBar().addWidget(self.lamp)
         self.statusBar().addWidget(self.status_text, 1)
+        self.statusBar().addPermanentWidget(self.cursor_label)
         self.statusBar().addPermanentWidget(self.progress)
 
         # ---- wiring
@@ -99,12 +119,15 @@ class MainWindow(QMainWindow):
         self.session.message.connect(self.log)
         self.tree.spectrumSelected.connect(self.select_key)
         self.plot.centerDragged.connect(self._on_center_dragged)
+        self.plot.cursorMoved.connect(self._on_cursor_moved)
         self.components.componentEdited.connect(self._on_component_edited)
         self.models.modelPicked.connect(self._show_model)
         self.settings.recipe_combo.currentIndexChanged.connect(self._on_recipe_combo)
         self.runner.started.connect(self._job_started)
         self.runner.stopped.connect(self._job_stopped)
         self.settings.set_recipes(builtin_recipe_names())
+        self.diagnostics.display(None)
+        self._rebuild_recent_menu()
         self.log(
             f"XPS AutoFit Studio {__version__} ready. Formats: {', '.join(supported_extensions())}"
         )
@@ -143,16 +166,40 @@ class MainWindow(QMainWindow):
         self.act_add.triggered.connect(self.add_component)
         self.act_remove = QAction("- Component", self)
         self.act_remove.triggered.connect(self.remove_component)
+        self.act_uncertainty = QAction("UNCERTAINTY", self)
+        self.act_uncertainty.setShortcut("F7")
+        self.act_uncertainty.setToolTip(
+            "Bootstrap the displayed fit: standard deviations and 95 % intervals"
+        )
+        self.act_uncertainty.triggered.connect(lambda: self.run_uncertainty())
         self.act_batch = QAction("BATCH", self)
         self.act_batch.setShortcut("Ctrl+B")
         self.act_batch.triggered.connect(self.batch_dialog)
         self.act_export = QAction("EXPORT", self)
         self.act_export.setShortcut("Ctrl+E")
         self.act_export.triggered.connect(self.export_dialog)
+        self.act_reset_view = QAction("Reset view", self)
+        self.act_reset_view.setShortcut("Home")
+        self.act_reset_view.triggered.connect(self.plot.reset_view)
+        self.act_save_plot = QAction("Save plot image…", self)
+        self.act_save_plot.setShortcut("Ctrl+Shift+S")
+        self.act_save_plot.triggered.connect(self.save_plot_dialog)
+        self.act_remove_spectrum = QAction("Remove spectrum", self)
+        self.act_remove_spectrum.setShortcut(QKeySequence.StandardKey.Delete)
+        self.act_remove_spectrum.triggered.connect(self.remove_current_spectrum)
+        self.act_copy_table = QAction("Copy table", self)
+        self.act_copy_table.setShortcut("Ctrl+Shift+C")
+        self.act_copy_table.triggered.connect(self.copy_current_table)
         for a in (self.act_open, self.act_open_folder):
             bar.addAction(a)
         bar.addSeparator()
-        for a in (self.act_fit, self.act_refit, self.act_add, self.act_remove):
+        for a in (
+            self.act_fit,
+            self.act_refit,
+            self.act_add,
+            self.act_remove,
+            self.act_uncertainty,
+        ):
             bar.addAction(a)
         bar.addSeparator()
         for a in (self.act_batch, self.act_export):
@@ -167,16 +214,29 @@ class MainWindow(QMainWindow):
         m_file = self.menuBar().addMenu("&File")
         m_file.addAction(self.act_open)
         m_file.addAction(self.act_open_folder)
+        self.menu_recent = m_file.addMenu("Recent files")
+        m_file.addAction(self.act_remove_spectrum)
         m_file.addSeparator()
         m_file.addAction(self.act_export)
+        m_file.addAction(self.act_save_plot)
         m_file.addSeparator()
         quit_action = QAction("Quit", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         m_file.addAction(quit_action)
         m_an = self.menuBar().addMenu("&Analysis")
-        for a in (self.act_fit, self.act_refit, self.act_add, self.act_remove, self.act_batch):
+        for a in (
+            self.act_fit,
+            self.act_refit,
+            self.act_add,
+            self.act_remove,
+            self.act_uncertainty,
+            self.act_batch,
+        ):
             m_an.addAction(a)
+        m_view = self.menuBar().addMenu("&View")
+        m_view.addAction(self.act_reset_view)
+        m_view.addAction(self.act_copy_table)
         m_help = self.menuBar().addMenu("&Help")
         about = QAction("About", self)
         about.triggered.connect(
@@ -194,18 +254,24 @@ class MainWindow(QMainWindow):
         self.log_panel.log(text)
         self.status_text.setText(text.splitlines()[0][:160])
 
+    def _job_actions(self) -> tuple[QAction, ...]:
+        return (self.act_fit, self.act_refit, self.act_batch, self.act_export, self.act_uncertainty)
+
     def _job_started(self, label: str) -> None:
         self.progress.setVisible(True)
         self.lamp.set_state("running", f"RUNNING: {label.upper()}")
-        for a in (self.act_fit, self.act_refit, self.act_batch, self.act_export):
+        for a in self._job_actions():
             a.setEnabled(False)
 
     def _job_stopped(self) -> None:
         self.progress.setVisible(False)
-        for a in (self.act_fit, self.act_refit, self.act_batch, self.act_export):
+        for a in self._job_actions():
             a.setEnabled(True)
         if self.lamp.state == "running":
             self.lamp.set_state("idle")
+
+    def _on_cursor_moved(self, energy: float, intensity: float) -> None:
+        self.cursor_label.setText(f"E {energy:9.3f} eV   I {intensity:12.1f}")
 
     def _error(self, text: str) -> None:
         self.lamp.set_state("error")
@@ -233,9 +299,98 @@ class MainWindow(QMainWindow):
 
     def load_files(self, paths: Sequence[str | Path]) -> list[str]:
         keys = self.session.load_paths(list(paths))
+        if keys:
+            self._remember_recent([str(p) for p in paths])
         if keys and self._current_key is None:
             self.tree.select_key(keys[0])
         return keys
+
+    def load_dropped(self, paths: Sequence[str | Path]) -> list[str]:
+        """Files and folders dropped on the window; folders expand to supported files."""
+        exts = set(supported_extensions())
+        files: list[Path] = []
+        skipped: list[str] = []
+        for p in map(Path, paths):
+            if p.is_dir():
+                files.extend(q for q in sorted(p.iterdir()) if q.suffix.lower() in exts)
+            elif p.is_file() and p.suffix.lower() in exts:
+                files.append(p)
+            elif p.is_file():
+                skipped.append(p.name)
+        if skipped:
+            self.log(
+                f"drop: skipped {len(skipped)} file(s) with unsupported extension: "
+                + ", ".join(skipped[:5])
+            )
+        if not files:
+            self.log("drop: no supported spectrum files")
+            return []
+        return self.load_files(files)
+
+    def dragEnterEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            event.acceptProposedAction()
+            self.load_dropped(paths)
+
+    # ------------------------------------------------------------- recent files
+    def recent_files(self) -> list[str]:
+        raw = self.settings_store.value("recent_files", [])
+        if isinstance(raw, str):
+            return [raw] if raw else []
+        if isinstance(raw, (list, tuple)):
+            return [str(p) for p in raw]
+        return []
+
+    def _remember_recent(self, paths: list[str]) -> None:
+        recent = [p for p in self.recent_files() if p not in paths]
+        recent = [*paths, *recent][:MAX_RECENT]
+        self.settings_store.setValue("recent_files", recent)
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self) -> None:
+        self.menu_recent.clear()
+        recent = self.recent_files()
+        for p in recent:
+            act = QAction(p, self)
+            act.triggered.connect(lambda _checked=False, path=p: self.load_files([path]))
+            self.menu_recent.addAction(act)
+        if recent:
+            self.menu_recent.addSeparator()
+            clear = QAction("Clear list", self)
+            clear.triggered.connect(self._clear_recent)
+            self.menu_recent.addAction(clear)
+        self.menu_recent.setEnabled(bool(recent))
+
+    def _clear_recent(self) -> None:
+        self.settings_store.setValue("recent_files", [])
+        self._rebuild_recent_menu()
+
+    def remove_current_spectrum(self) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        key, item = cur
+        self.session.remove(key)
+        self._current_key = None
+        self.plot.show_spectrum(item.spectrum, "")
+        self.components.show_result(None)
+        self.models.show_selection(None)
+        self.diagnostics.display(None)
+        self.lamp.set_state("idle")
+        self.log(f"removed {item.display_name}")
+        if self.session.order:
+            self.tree.select_key(self.session.order[0])
 
     def _refresh_tree(self) -> None:
         items = [self.session.items[k] for k in self.session.order]
@@ -258,6 +413,7 @@ class MainWindow(QMainWindow):
             self.plot.show_spectrum(spectrum, item.display_name)
             self.components.show_result(None)
             self.models.show_selection(None)
+            self.diagnostics.display(None)
             self.lamp.set_state("idle")
         self.tree.select_key(key)
 
@@ -436,20 +592,94 @@ class MainWindow(QMainWindow):
         self.log(f"removed {label}")
         self.refit(specs)
 
-    def _show_model(self, n: int) -> None:
+    def _show_model(self, index: int) -> None:
         cur = self.current()
         if cur is None:
             return
         state = self.session.results.get(cur[0])
         if state is None or state.selection is None:
             return
-        for cand in state.selection.candidates:
-            if cand.n_components == n:
-                self.plot.show_result(
-                    cand.result, f"{cur[1].display_name} - candidate n={n}", draggable=False
-                )
-                self.components.show_result(cand.result)
-                return
+        cands = state.selection.candidates
+        if not 0 <= index < len(cands):
+            return
+        cand = cands[index]
+        if cand.result is state.result:
+            self._display_state(cur[0], state)
+            return
+        title = f"{cur[1].display_name} - candidate n={cand.n_components} ({cand.variant})"
+        self.plot.show_result(cand.result, title, draggable=False)
+        self.components.show_result(cand.result)
+        status = "ok" if cand.physical_ok else "needs_review"
+        self.diagnostics.display(cand.result, state.selection, status)
+
+    # ------------------------------------------------------------- uncertainty
+    def run_uncertainty(self, n: int | None = None) -> bool:
+        cur = self.current()
+        if cur is None:
+            self.log("select a fitted spectrum first")
+            return False
+        key, item = cur
+        state = self.session.results.get(key)
+        if state is None or state.result is None or state.selection is None:
+            self.log("run AUTO FIT first; the bootstrap resamples a fitted model")
+            return False
+        if n is None:
+            n, ok = QInputDialog.getInt(
+                self, "Bootstrap uncertainties", "Replicates (Poisson or residual):", 100, 8, 5000
+            )
+            if not ok:
+                return False
+        sel = state.selection
+        result = state.result
+        count = int(n)
+
+        def job() -> BootstrapResult:
+            return bootstrap(sel.spectrum, result, n=count, seed=sel.seed)
+
+        def done(boot: BootstrapResult) -> None:
+            self.session.set_bootstrap(key, boot)
+            self.tabs.setCurrentWidget(self.diagnostics)
+            worst = max(
+                (
+                    (v["area"]["std"] / max(abs(v["area"]["p50"]), 1e-9), label)
+                    for label, v in boot.summary.items()
+                    if "area" in v
+                ),
+                default=(0.0, ""),
+            )
+            self.log(
+                f"bootstrap {boot.n_succeeded}/{boot.n_requested} ({boot.mode}): largest relative "
+                f"area spread {100 * worst[0]:.1f} % ({worst[1]})"
+            )
+
+        return self.runner.start(job, done, self._error, label="bootstrap")
+
+    def copy_current_table(self) -> None:
+        widget = self.tabs.currentWidget()
+        if isinstance(widget, (ComponentsTable, ModelTable)):
+            text = widget.copy_to_clipboard(selected_only=False)
+            self.log(f"copied {len(text.splitlines()) - 1} rows to the clipboard")
+        else:
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.clipboard().setText(self.diagnostics.toPlainText())
+            self.log("copied the diagnostics readout to the clipboard")
+
+    def save_plot_dialog(self) -> None:
+        cur = self.current()
+        if cur is None:
+            return
+        default = str(Path(str(self.settings_store.value("last_dir", str(Path.home())))))
+        name = Path(default) / f"{Path(cur[1].path).stem}_plot.png"
+        path, _ = QFileDialog.getSaveFileName(self, "Save plot image", str(name), "PNG (*.png)")
+        if path:
+            self.save_plot(path)
+
+    def save_plot(self, path: str | Path) -> Path:
+        p = Path(path)
+        self.plot.export_png(str(p))
+        self.log(f"saved plot image: {p}")
+        return p
 
     # ------------------------------------------------------------------ display
     def _on_result_changed(self, key: str) -> None:
@@ -469,6 +699,7 @@ class MainWindow(QMainWindow):
         self.plot.show_result(result, title)
         self.components.show_result(result)
         self.models.show_selection(sel)
+        self.diagnostics.display(result, sel, state.status, state.bootstrap)
         self.lamp.set_state(state.status)
 
     # ------------------------------------------------------------------ export / batch

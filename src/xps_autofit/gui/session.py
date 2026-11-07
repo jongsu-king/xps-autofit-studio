@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, Signal
 from ..automation.model_selection import Candidate, SelectionResult
 from ..core.fitting import FitResult
 from ..core.spectrum import Spectrum
+from ..core.uncertainty import BootstrapResult
 from ..readers import read_spectra
 from ..recipes import Recipe
 
@@ -40,6 +41,8 @@ class RegionState:
     manual: FitResult | None = None
     status: str = "idle"
     notes: list[str] = field(default_factory=list)
+    bootstrap: BootstrapResult | None = None
+    """Bootstrap of the displayed result (cleared when the result changes)."""
 
     @property
     def result(self) -> FitResult | None:
@@ -125,6 +128,7 @@ class Session(QObject):
         st = self.state(key)
         st.selection = selection
         st.manual = None
+        st.bootstrap = None
         st.status = selection.status
         st.notes = list(selection.notes)
         self.resultChanged.emit(key)
@@ -132,6 +136,12 @@ class Session(QObject):
     def set_manual(self, key: str, result: FitResult, notes: list[str]) -> None:
         st = self.state(key)
         st.manual = result
+        st.bootstrap = None
         st.status = "manual"
         st.notes = notes
+        self.resultChanged.emit(key)
+
+    def set_bootstrap(self, key: str, boot: BootstrapResult) -> None:
+        st = self.state(key)
+        st.bootstrap = boot
         self.resultChanged.emit(key)

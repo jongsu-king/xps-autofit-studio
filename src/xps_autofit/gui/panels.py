@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -27,16 +28,52 @@ from PySide6.QtWidgets import (
 )
 
 from ..automation.model_selection import SelectionResult
-from ..core.background import BACKGROUND_TYPES, BackgroundSpec
+from ..core.background import BACKGROUND_MODES, BACKGROUND_TYPES, BackgroundSpec
 from ..core.constraints import DoubletSpec, PeakConstraints
 from ..core.fitting import FitResult
 from ..core.peak_shapes import SHAPES
 from ..core.region import RegionSpec
 from ..core.spectrum import Spectrum
+from ..core.uncertainty import BootstrapResult
 from ..database.binding_energies import spin_orbit
 from ..recipes import Recipe
 from .session import LoadedSpectrum
 from .theme import STATUS_COLORS, STATUS_TEXT
+
+
+def table_to_tsv(table: QTableWidget, selected_only: bool = True) -> str:
+    """Header plus rows as tab-separated text (for the clipboard)."""
+    rows = sorted({i.row() for i in table.selectedItems()}) if selected_only else []
+    if not rows:
+        rows = list(range(table.rowCount()))
+    header = []
+    for c in range(table.columnCount()):
+        h = table.horizontalHeaderItem(c)
+        header.append(h.text() if h is not None else "")
+    lines = ["\t".join(header)]
+    for r in rows:
+        cells = []
+        for c in range(table.columnCount()):
+            item = table.item(r, c)
+            cells.append(item.text().strip() if item is not None else "")
+        lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+class CopyableTable(QTableWidget):
+    """Table whose selection (or whole content) goes to the clipboard with Ctrl+C."""
+
+    def copy_to_clipboard(self, selected_only: bool = True) -> str:
+        text = table_to_tsv(self, selected_only)
+        QApplication.clipboard().setText(text)
+        return text
+
+    def keyPressEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy_to_clipboard()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 # ----------------------------------------------------------------------------- lamp
@@ -220,12 +257,22 @@ class FitSettingsPanel(QWidget):
         self.background = QComboBox()
         self.background.addItems([*BACKGROUND_TYPES, "auto"])
         self.background.setCurrentText("shirley")
+        self.bg_mode = QComboBox()
+        self.bg_mode.addItems([*BACKGROUND_MODES, "auto"])
+        self.bg_mode.setCurrentText("static")
+        self.bg_mode.setToolTip(
+            "static: computed from the endpoints before the fit.\n"
+            "active: Shirley/Tougaard generated from the fitted peaks inside the fit\n"
+            "(offset and scattering factor are free parameters; no endpoint bias).\n"
+            "auto: try both and choose with the criterion."
+        )
         self.refine = QCheckBox("Refine with free linear term")
         self.refine.setChecked(True)
         self.endpoints = QSpinBox()
         self.endpoints.setRange(1, 25)
         self.endpoints.setValue(3)
         f.addRow("Type", self.background)
+        f.addRow("Mode", self.bg_mode)
         f.addRow("Endpoint points", self.endpoints)
         f.addRow("", self.refine)
         outer.addWidget(g_bg)
@@ -250,6 +297,8 @@ class FitSettingsPanel(QWidget):
         self.fwhm_l_hi = _dspin(0.01, 5, 1.0, 0.05)
         self.share_l = QCheckBox("Share Lorentzian width")
         self.share_l.setChecked(True)
+        self.asym_hi = _dspin(0.01, 0.5, 0.5, 0.05)
+        self.asym_hi.setToolTip("Upper bound of the Doniach-Sunjic asymmetry (metals: 0.05-0.2)")
         self.min_sep = _dspin(0.0, 5, 0.3, 0.05)
         fg = QHBoxLayout()
         fg.addWidget(self.fwhm_g_lo)
@@ -264,8 +313,13 @@ class FitSettingsPanel(QWidget):
         f.addRow("FWHM G (eV)", fg)
         f.addRow("FWHM L (eV)", fl)
         f.addRow("", self.share_l)
+        f.addRow("DS asymmetry max", self.asym_hi)
         f.addRow("Min separation", self.min_sep)
         outer.addWidget(g_peaks)
+        self.shape.currentTextChanged.connect(
+            lambda t: self.asym_hi.setEnabled(t in ("doniach_sunjic", "auto"))
+        )
+        self.asym_hi.setEnabled(False)
 
         g_d = QGroupBox("SPIN-ORBIT DOUBLET")
         f = QFormLayout(g_d)
@@ -368,6 +422,7 @@ class FitSettingsPanel(QWidget):
         if region.range:
             self.set_range(*region.range)
         self.background.setCurrentText(region.background.type)
+        self.bg_mode.setCurrentText(region.background.mode)
         self.endpoints.setValue(region.background.endpoint_points)
         self.refine.setChecked(region.refine_background)
         self.shape.setCurrentText(region.shape)
@@ -379,6 +434,7 @@ class FitSettingsPanel(QWidget):
         self.fwhm_l_lo.setValue(c.fwhm_l[0])
         self.fwhm_l_hi.setValue(c.fwhm_l[1])
         self.share_l.setChecked(c.share_fwhm_l)
+        self.asym_hi.setValue(c.asym[1])
         self.min_sep.setValue(c.min_separation)
         self.doublet.setChecked(region.doublet is not None)
         if region.doublet is not None:
@@ -400,6 +456,7 @@ class FitSettingsPanel(QWidget):
         constraints = PeakConstraints(
             fwhm_g=(self.fwhm_g_lo.value(), self.fwhm_g_hi.value()),
             fwhm_l=(self.fwhm_l_lo.value(), self.fwhm_l_hi.value()),
+            asym=(0.0, max(self.asym_hi.value(), 0.01)),
             share_fwhm_l=self.share_l.isChecked(),
             min_separation=self.min_sep.value(),
         )
@@ -423,7 +480,9 @@ class FitSettingsPanel(QWidget):
             line=line,
             range=(lo, hi),
             background=BackgroundSpec(
-                type=self.background.currentText(), endpoint_points=self.endpoints.value()
+                type=self.background.currentText(),
+                endpoint_points=self.endpoints.value(),
+                mode=self.bg_mode.currentText(),
             ),
             refine_background=self.refine.isChecked(),
             shape=self.shape.currentText(),
@@ -453,10 +512,11 @@ COMPONENT_HEADERS = [
     "Comp. %",
     "FWHM G",
     "FWHM L",
+    "Asym",
 ]
 
 
-class ComponentsTable(QTableWidget):
+class ComponentsTable(CopyableTable):
     componentEdited = Signal(str, str, float)  # parent label, field, value
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -487,6 +547,7 @@ class ComponentsTable(QTableWidget):
                     f"{comp.component_fraction:.1f}" if comp.component_fraction is not None else "",
                     f"{comp.fwhm_g:.3f}" if comp.fwhm_g is not None else "",
                     f"{comp.fwhm_l:.3f}" if comp.fwhm_l is not None else "",
+                    f"{comp.asym:.3f}" if comp.asym is not None else "",
                 ]
                 for c, text in enumerate(values):
                     item = QTableWidgetItem(text)
@@ -521,16 +582,17 @@ class ComponentsTable(QTableWidget):
 
 
 # ------------------------------------------------------------------- model table
-class ModelTable(QTableWidget):
+class ModelTable(CopyableTable):
     modelPicked = Signal(int)
+    """Index of the clicked candidate in ``SelectionResult.candidates``."""
 
-    HEADERS = ["n", "Criterion", "χ²red", "Physical", "Reasons"]
+    HEADERS = ["n", "Model", "Criterion", "χ²red", "DW", "Physical", "Reasons"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.verticalHeader().setVisible(False)
-        self.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.cellClicked.connect(self._picked)
@@ -538,32 +600,146 @@ class ModelTable(QTableWidget):
     def _picked(self, row: int, _col: int) -> None:
         item = self.item(row, 0)
         if item is not None:
-            self.modelPicked.emit(int(item.text()))
+            self.modelPicked.emit(int(item.data(Qt.ItemDataRole.UserRole)))
 
     def show_selection(self, sel: SelectionResult | None) -> None:
         self.setRowCount(0)
         if sel is None:
             return
-        for c in sel.candidates:
+        for index, c in enumerate(sel.candidates):
             r = self.rowCount()
             self.insertRow(r)
             reasons = "; ".join(v.message for v in c.violations) or "; ".join(
                 v.message for v in c.warnings
             )
+            dw = c.result.stats.durbin_watson
             cells = [
                 str(c.n_components),
+                c.variant,
                 f"{c.criterion_value:.1f}",
                 f"{c.result.stats.redchi:.2f}",
+                f"{dw:.2f}" if dw is not None else "-",
                 "pass" if c.physical_ok else "FAIL",
                 reasons,
             ]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, index)
                 if sel.best is c:
                     item.setForeground(QColor(STATUS_COLORS["ok"]))
-                if col == 3 and not c.physical_ok:
+                if col == 5 and not c.physical_ok:
                     item.setForeground(QColor(STATUS_COLORS["failed"]))
+                if col == 4 and dw is not None and dw < 1.0:
+                    item.setForeground(QColor(STATUS_COLORS["ambiguous"]))
                 self.setItem(r, col, item)
+
+
+# ------------------------------------------------------------- diagnostics readout
+class DiagnosticsPanel(QPlainTextEdit):
+    """Monospace readout of the fit statistics, residual diagnostics, background
+    parameters, warnings and (when run) the bootstrap uncertainties."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setObjectName("readout")
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+
+    def display(
+        self,
+        result: FitResult | None = None,
+        selection: SelectionResult | None = None,
+        status: str = "",
+        boot: BootstrapResult | None = None,
+    ) -> None:
+        self.setPlainText(diagnostics_text(result, selection, status, boot))
+
+
+def diagnostics_text(
+    result: FitResult | None,
+    selection: SelectionResult | None,
+    status: str = "",
+    boot: BootstrapResult | None = None,
+) -> str:
+    if result is None:
+        return "No fit yet.  Select a spectrum and run AUTO FIT."
+    s = result.stats
+    bg = result.background
+    lines: list[str] = []
+    model = selection.best.variant if (selection and selection.best) else result.settings.shape
+    lines.append(
+        f"MODEL       {model}   n = {len(result.majors())}   "
+        f"{STATUS_TEXT.get(status, status.upper())}"
+    )
+    weight = "Poisson weights" if s.weighted else "unweighted"
+    lines.append(f"DATA        {s.ndata} points   {weight}   free parameters {s.nvarys}")
+    lines.append(
+        f"FIT         chi2red {s.redchi:.3f}   AICc {s.aicc:.1f}   BIC {s.bic:.1f}   "
+        f"nfev {s.nfev}   {'converged' if s.success else 'NOT converged'}"
+    )
+    if s.durbin_watson is not None:
+        verdict = "white" if s.durbin_watson >= 1.0 else "STRUCTURED"
+        rz = f"{s.runs_z:+.2f}" if s.runs_z is not None else "-"
+        lag = f"{s.lag1_autocorr:+.3f}" if s.lag1_autocorr is not None else "-"
+        lines.append(
+            f"RESIDUAL    Durbin-Watson {s.durbin_watson:.2f} ({verdict}; 2 = white noise)   "
+            f"runs z {rz}   lag-1 r {lag}"
+        )
+    info = bg.info
+    bg_line = f"BACKGROUND  {bg.spec.type} {info.get('mode', bg.spec.mode)}"
+    if "offset" in info:
+        bg_line += f"   offset {info['offset']:.1f}   scatter k {info['scatter']:.4g}"
+    elif "I_low_BE" in info:
+        bg_line += f"   I(low BE) {info['I_low_BE']:.1f}   I(high BE) {info['I_high_BE']:.1f}"
+    if result.settings.refine_linear_background:
+        slope = result.params.get("bg_slope", {}).get("value")
+        offset = result.params.get("bg_offset", {}).get("value")
+        extra = []
+        if offset is not None and info.get("mode") != "active":
+            extra.append(f"offset {offset:+.2f}")
+        if slope is not None:
+            extra.append(f"slope {slope:+.3g}/eV")
+        if extra:
+            bg_line += "   linear term " + ", ".join(extra)
+    lines.append(bg_line)
+    for c in result.majors():
+        err = f" ± {c.center_err:.3f}" if c.center_err is not None else ""
+        aerr = f" ± {c.area_err:.0f}" if c.area_err is not None else ""
+        frac = f"{c.component_fraction:5.1f} %" if c.component_fraction is not None else ""
+        asym = f"   asym {c.asym:.3f}" if c.asym is not None else ""
+        lines.append(
+            f"            {c.label[:26]:<26} {c.center:9.3f}{err:<9} eV   FWHM {c.fwhm:5.3f}   "
+            f"area {c.area:10.1f}{aerr:<9} {frac}{asym}"
+        )
+    warnings = list(result.warnings)
+    if selection is not None and selection.best is not None and selection.best.result is result:
+        warnings += [v.message for v in selection.best.violations + selection.best.warnings]
+    if warnings:
+        lines.append("WARNINGS")
+        lines.extend(f"  - {w}" for w in dict.fromkeys(warnings))
+    if selection is not None and selection.notes:
+        lines.append("NOTES")
+        lines.extend(f"  - {n}" for n in selection.notes[:8])
+    if boot is not None:
+        lines.append(
+            f"BOOTSTRAP   {boot.n_succeeded}/{boot.n_requested} replicates ({boot.mode}); "
+            "std and 95 % interval"
+        )
+        for label, attrs in boot.summary.items():
+            area = attrs.get("area")
+            frac_s = attrs.get("component_fraction") or attrs.get("fraction")
+            cen = attrs.get("center")
+            parts = [f"            {label[:26]:<26}"]
+            if area:
+                parts.append(f"area ± {area['std']:.0f} [{area['p2.5']:.0f}, {area['p97.5']:.0f}]")
+            if frac_s:
+                parts.append(
+                    f"  % ± {frac_s['std']:.2f} [{frac_s['p2.5']:.1f}, {frac_s['p97.5']:.1f}]"
+                )
+            if cen:
+                parts.append(f"  centre ± {cen['std']:.3f} eV")
+            lines.append(" ".join(parts))
+    return "\n".join(lines)
 
 
 class LogPanel(QPlainTextEdit):

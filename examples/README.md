@@ -22,3 +22,7 @@ xps-autofit batch examples/data --recipe p3ht --region "S 2p" --output examples/
 
 `python examples/compare_with_truth.py examples/data examples/data/batch_out`
 prints the recovered values next to the generating ones.
+
+`QT_QPA_PLATFORM=offscreen python examples/make_screenshots.py docs/images`
+renders the desktop-application screenshots used in the documentation without a
+display (synthetic data, built-in recipes, `MainWindow(synchronous_jobs=True)`).

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
 NOT_CALCULABLE = "NOT_CALCULABLE"
 
 
@@ -23,6 +25,10 @@ class QuantEntry:
     rsf: float | None
     corrected: float | None = None
     atomic_percent: float | None = None
+    atomic_percent_std: float | None = None
+    """Standard deviation over bootstrap replicates (``None`` without bootstrap)."""
+    atomic_percent_p2_5: float | None = None
+    atomic_percent_p97_5: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -75,6 +81,37 @@ def atomic_percent(
     return QuantResult(
         "OK", entries, [], "RSF-normalised areas; no transmission or escape-depth correction"
     )
+
+
+def atomic_percent_samples(result: QuantResult, samples: dict[str, np.ndarray]) -> int:
+    """Propagate bootstrap area replicates to atomic-percent uncertainties.
+
+    ``samples`` maps a region label to its replicate areas.  Replicates are paired by
+    index (the regions' noise is independent), so the number used is the smallest
+    replicate count among the regions.  Entries are updated in place; returns the
+    number of replicates used (0 when nothing could be propagated).
+    """
+    if result.status != "OK" or not result.entries:
+        return 0
+    arrays = []
+    for e in result.entries:
+        arr = samples.get(e.label)
+        if arr is None or arr.size < 2:
+            return 0
+        arrays.append(np.asarray(arr, dtype=float) / float(e.rsf))  # type: ignore[arg-type]
+    n = min(a.size for a in arrays)
+    mat = np.vstack([a[:n] for a in arrays])
+    total = mat.sum(axis=0)
+    good = total > 0
+    if good.sum() < 2:
+        return 0
+    pct = 100.0 * mat[:, good] / total[good]
+    for e, row in zip(result.entries, pct):
+        e.atomic_percent_std = float(np.std(row, ddof=1))
+        e.atomic_percent_p2_5 = float(np.percentile(row, 2.5))
+        e.atomic_percent_p97_5 = float(np.percentile(row, 97.5))
+    result.note += f"; uncertainties from {int(good.sum())} bootstrap replicates"
+    return int(good.sum())
 
 
 def auger_parameter(photoelectron_be: float, auger_ke: float) -> float:

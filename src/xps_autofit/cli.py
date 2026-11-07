@@ -59,14 +59,21 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
         "--background", choices=["none", "linear", "shirley", "tougaard", "auto"], default="shirley"
     )
     p.add_argument(
+        "--background-mode",
+        choices=["static", "active", "auto"],
+        default="static",
+        help="active: Shirley/Tougaard generated from the fitted peaks inside the fit",
+    )
+    p.add_argument(
         "--no-refine-background",
         action="store_true",
         help="do not add a free linear background term",
     )
     p.add_argument(
         "--shape",
-        choices=["gaussian", "lorentzian", "voigt", "pseudo_voigt", "auto"],
+        choices=["gaussian", "lorentzian", "voigt", "pseudo_voigt", "doniach_sunjic", "auto"],
         default="voigt",
+        help="doniach_sunjic: asymmetric line for metals (Gaussian-broadened)",
     )
     p.add_argument(
         "--optimizer",
@@ -148,7 +155,7 @@ def _adhoc_recipe(args: argparse.Namespace) -> Recipe:
         element=args.element,
         line=args.line,
         range=tuple(args.range) if args.range else None,
-        background=BackgroundSpec(type=args.background),
+        background=BackgroundSpec(type=args.background, mode=args.background_mode),
         refine_background=not args.no_refine_background,
         shape=args.shape,
         optimizer=args.optimizer,
@@ -200,9 +207,10 @@ def _print_report(batch: BatchReport) -> None:
             if r.selection is not None and r.selection.best is not None:
                 res = r.selection.best.result
                 st = res.stats
+                dw = f"  DW {st.durbin_watson:.2f}" if st.durbin_watson is not None else ""
                 print(
-                    f"      reduced chi-sq {st.redchi:.3g}  AICc {st.aicc:.1f}  "
-                    f"weighted={st.weighted}"
+                    f"      reduced chi-sq {st.redchi:.3g}  AICc {st.aicc:.1f}{dw}  "
+                    f"weighted={st.weighted}  model {r.selection.best.variant}"
                 )
                 for c in res.components:
                     err = f" ± {c.center_err:.3f}" if c.center_err is not None else ""
@@ -229,6 +237,8 @@ def _print_report(batch: BatchReport) -> None:
             print(f"  quantification: {q.status}" + (f" ({q.note})" if q.status != "OK" else ""))
             for e in q.entries:
                 pct = f"{e.atomic_percent:6.2f} at.%" if e.atomic_percent is not None else "   n/a"
+                if e.atomic_percent_std is not None:
+                    pct += f" ± {e.atomic_percent_std:.2f}"
                 rsf = f"{e.rsf:7.3f}" if e.rsf is not None else "      -"
                 print(f"      {e.label:<12} area {e.area:12.1f}  RSF {rsf}  {pct}")
     if batch.summary_paths:

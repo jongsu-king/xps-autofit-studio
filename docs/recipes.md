@@ -17,22 +17,30 @@ regions:
     element: S
     line: 2p
     range: [160.0, 172.0]      # binding energy window, eV
-    background: {type: shirley, endpoint_points: 3}   # none | linear | shirley | tougaard | auto
+    background: {type: shirley, mode: static, endpoint_points: 3}
+                               # type: none | linear | shirley | tougaard | auto
+                               # mode: static (from the endpoints, fixed) | active
+                               #       (Shirley/Tougaard generated from the fitted
+                               #       peaks inside the fit) | auto
     refine_background: true    # free linear term in the fit (default true)
-    shape: voigt               # gaussian | lorentzian | voigt | pseudo_voigt | auto
+    shape: voigt               # gaussian | lorentzian | voigt | pseudo_voigt |
+                               # doniach_sunjic (asymmetric, metals) | auto
     optimizer: leastsq         # leastsq | global (differential evolution, then LM)
     constraints:
-      fwhm_g: [0.5, 1.8]       # Gaussian FWHM bounds (voigt)
-      fwhm_l: [0.05, 0.5]      # Lorentzian FWHM bounds (voigt)
+      fwhm_g: [0.5, 1.8]       # Gaussian FWHM bounds (voigt, doniach_sunjic)
+      fwhm_l: [0.05, 0.5]      # Lorentzian FWHM bounds (voigt, doniach_sunjic)
       fwhm: [0.3, 3.5]         # FWHM bounds (gaussian, lorentzian, pseudo_voigt)
       eta: [0.0, 1.0]          # pseudo_voigt mixing bounds
+      asym: [0.0, 0.5]         # doniach_sunjic asymmetry bounds (metals 0.05-0.2)
       share_fwhm_l: true       # one Lorentzian width for the region
       share_fwhm_g: false
       share_fwhm: false
       share_eta: true
+      share_asym: true         # one asymmetry for the region
       min_separation: 0.5      # eV between majors
       edge_margin: 0.2         # eV from the region edges
       significance_sigma: 3.0  # area and height significance
+      residual_dw_warning: 1.0 # warn when the residual's Durbin-Watson falls below this
     doublet:                   # omit for s lines; "auto" looks up the database
       splitting: 1.18
       splitting_tolerance: 0.02
@@ -60,13 +68,19 @@ regions:
     auger_pair: Cu 2p3/2       # photoelectron region for alpha' = BE + KE
 ```
 
-`background: {type: auto}` fits every background in `shirley, tougaard, linear`
-and `shape: auto` every shape in `voigt, pseudo_voigt`; each combination goes
-through the same component-count search, and the final choice uses the same
-criterion and physical checks. `optimizer: global` runs a seeded differential
-evolution inside the parameter bounds for the first start of every model before
-the Levenberg-Marquardt polish; it is several times slower and meant for heavily
+`background: {type: auto}` fits every background in `shirley, tougaard, linear`,
+`mode: auto` both the static and the active form of Shirley and Tougaard, and
+`shape: auto` every shape in `voigt, pseudo_voigt`; each combination goes through
+the same component-count search, and the final choice uses the same criterion and
+physical checks. `optimizer: global` runs a seeded differential evolution inside
+the parameter bounds for the first start of every model before the
+Levenberg-Marquardt polish; it is several times slower and meant for heavily
 overlapping regions.
+
+Use `mode: active` when the region edges are noisy or carry peak tails (the
+classical Shirley then starts too high or too low), and `shape: doniach_sunjic`
+for metallic lines (Au 4f, Cu 2p of Cu(0), Pt 4f, ...) whose high-BE tail a
+symmetric Voigt cannot follow. Both are described in `docs/algorithm.md`.
 
 Regions are matched to the spectra in a file by VAMAS `species`/`transition`
 metadata when available, otherwise by energy-range overlap (at least 60 % of the

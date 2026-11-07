@@ -21,8 +21,21 @@ def _rgba(hex_color: str, alpha: int) -> tuple[int, int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), alpha
 
 
+def background_label(result: FitResult) -> str:
+    """``Background (shirley, active + linear)``-style legend text."""
+    bg = result.background
+    text = bg.spec.type
+    if bg.info.get("mode") == "active":
+        text += ", active"
+    if result.settings.refine_linear_background:
+        text += " + linear"
+    return f"Background ({text})"
+
+
 class SpectrumPlot(QWidget):
     centerDragged = Signal(str, float)
+    cursorMoved = Signal(float, float)
+    """Mouse position in data coordinates: (binding energy, intensity)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -55,6 +68,15 @@ class SpectrumPlot(QWidget):
         self.title_item = pg.TextItem("", color=INK_SECONDARY, anchor=(0, 1))
         self._lines: dict[str, pg.InfiniteLine] = {}
         self._spectrum: Spectrum | None = None
+        # Crosshair: a thin vertical hairline that follows the mouse in both panels.
+        self._cross_main = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(GRID, width=1))
+        self._cross_resid = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(GRID, width=1))
+        for item in (self._cross_main, self._cross_resid):
+            item.setZValue(-10)
+            item.hide()
+        self._proxy = pg.SignalProxy(
+            self.main.scene().sigMouseMoved, rateLimit=40, slot=self._mouse_moved
+        )
 
     # ------------------------------------------------------------------ helpers
     def _reset(self) -> None:
@@ -62,6 +84,27 @@ class SpectrumPlot(QWidget):
         self.resid.clear()
         self.legend.clear()
         self._lines.clear()
+        self.main.addItem(self._cross_main, ignoreBounds=True)
+        self.resid.addItem(self._cross_resid, ignoreBounds=True)
+
+    def _mouse_moved(self, event: tuple) -> None:
+        pos = event[0]
+        vb = self.main.getViewBox()
+        if not self.main.sceneBoundingRect().contains(pos):
+            self._cross_main.hide()
+            self._cross_resid.hide()
+            return
+        point = vb.mapSceneToView(pos)
+        x = float(point.x())
+        self._cross_main.setPos(x)
+        self._cross_resid.setPos(x)
+        self._cross_main.show()
+        self._cross_resid.show()
+        self.cursorMoved.emit(x, float(point.y()))
+
+    def reset_view(self) -> None:
+        if self._spectrum is not None:
+            self._fit_view(self._spectrum.energy)
 
     def show_spectrum(self, spectrum: Spectrum, title: str = "") -> None:
         self._reset()
@@ -87,14 +130,13 @@ class SpectrumPlot(QWidget):
         self._reset()
         x = result.x
         bg = result.background_total
+        self._spectrum = Spectrum(x, result.y)
         self._draw_raw(x, result.y)
-        bg_label = "Background"
-        if result.settings.refine_linear_background:
-            bg_label += f" ({result.background.spec.type} + linear)"
-        else:
-            bg_label += f" ({result.background.spec.type})"
         bg_curve = self.main.plot(
-            x, bg, pen=pg.mkPen(MUTED, width=1, style=Qt.PenStyle.DashLine), name=bg_label
+            x,
+            bg,
+            pen=pg.mkPen(MUTED, width=1, style=Qt.PenStyle.DashLine),
+            name=background_label(result),
         )
         majors = result.majors()
         order = sorted(range(len(majors)), key=lambda j: -majors[j].center)
@@ -123,6 +165,10 @@ class SpectrumPlot(QWidget):
                         "position": 0.95 - 0.08 * (slot[comp.parent] % 5),
                         "color": color,
                         "fill": (20, 20, 19, 190),
+                        # The x axis is inverted (binding energy): swap the default
+                        # anchors so the label still sits on the side facing the
+                        # centre of the view instead of running off the edge.
+                        "anchors": [(1, 0.5), (0, 0.5)],
                     },
                 )
                 line.setBounds((float(x[0]), float(x[-1])))

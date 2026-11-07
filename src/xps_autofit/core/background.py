@@ -14,6 +14,9 @@ import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
 BACKGROUND_TYPES = ("none", "linear", "shirley", "tougaard")
+BACKGROUND_MODES = ("static", "active")
+#: Types for which an *active* (fitted together with the peaks) version exists.
+ACTIVE_TYPES = ("shirley", "tougaard")
 
 
 class BackgroundError(ValueError):
@@ -28,6 +31,14 @@ class BackgroundSpec:
     ----------
     type
         ``"none"``, ``"linear"``, ``"shirley"`` or ``"tougaard"``.
+    mode
+        ``"static"``: the background is computed from the data (endpoints) before
+        the fit and held fixed.  ``"active"``: for Shirley and Tougaard the
+        background is generated from the fitted peak envelope inside the fit,
+        ``B(E) = offset + k * S[envelope](E)``, with ``offset`` and the scattering
+        factor ``k`` as free parameters.  The endpoints then no longer bias the
+        result and background and peaks are self-consistent.  ``"auto"`` (regions
+        only) tries both.
     endpoint_points
         Number of points averaged at each end of the region to define the endpoint
         intensities.
@@ -44,16 +55,25 @@ class BackgroundSpec:
     tolerance: float = 1e-6
     tougaard_B: float | None = None
     tougaard_C: float = 1643.0
+    mode: str = "static"
 
     def __post_init__(self) -> None:
         if self.type not in BACKGROUND_TYPES and self.type != "auto":
             raise BackgroundError(f"background type must be one of {BACKGROUND_TYPES} or 'auto'")
+        if self.mode not in BACKGROUND_MODES and self.mode != "auto":
+            raise BackgroundError(f"background mode must be one of {BACKGROUND_MODES} or 'auto'")
         if self.endpoint_points < 1:
             raise BackgroundError("endpoint_points must be >= 1")
+
+    @property
+    def is_active(self) -> bool:
+        """True when the background is fitted with the peaks (active Shirley/Tougaard)."""
+        return self.mode == "active" and self.type in ACTIVE_TYPES
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.type,
+            "mode": self.mode,
             "endpoint_points": self.endpoint_points,
             "max_iterations": self.max_iterations,
             "tolerance": self.tolerance,
@@ -151,6 +171,19 @@ def shirley_background(
     return bg, info
 
 
+def tougaard_kernel(x: np.ndarray, C: float = 1643.0) -> np.ndarray:
+    """Matrix ``K[i, k] = F(x_i - x_k) * dx_k`` of the universal loss function, so that
+    ``K @ signal`` is the Tougaard integral of ``signal`` (unit ``B``)."""
+    t = x[:, None] - x[None, :]
+    kernel = np.where(t > 0, t / (C + t**2) ** 2, 0.0)
+    return kernel * np.gradient(x)[None, :]
+
+
+def shirley_operator(x: np.ndarray, signal: np.ndarray) -> np.ndarray:
+    """Running integral of ``signal`` from the low-BE end (unit scattering factor)."""
+    return cumulative_trapezoid(signal, x, initial=0.0)
+
+
 def tougaard_background(
     x: np.ndarray,
     y: np.ndarray,
@@ -168,11 +201,7 @@ def tougaard_background(
     _check(x, y)
     lo, hi = _endpoints(y, endpoint_points)
     j = y - lo
-    # kernel[i, k] = F(x_i - x_k) for x_k < x_i, 0 otherwise
-    t = x[:, None] - x[None, :]
-    kernel = np.where(t > 0, t / (C + t**2) ** 2, 0.0)
-    dx = np.gradient(x)
-    k = kernel @ (j * dx)
+    k = tougaard_kernel(x, C) @ j
     info: dict[str, Any] = {"I_low_BE": lo, "I_high_BE": hi, "C": C}
     n = int(max(1, min(endpoint_points, x.size // 2)))
     k_end = float(np.mean(k[-n:]))
@@ -209,6 +238,12 @@ def compute_background(x: np.ndarray, y: np.ndarray, spec: BackgroundSpec) -> Ba
         )
         if not info.get("converged", False):
             warnings.append(f"Shirley did not converge in {info.get('iterations')} iterations")
+        if spec.is_active:
+            signal = y - bg
+            q_total = float(cumulative_trapezoid(signal, x, initial=0.0)[-1])
+            info["scatter"] = float(info["step_height"] / q_total) if q_total > 0 else 0.0
         return BackgroundResult(bg, spec, info, warnings)
     bg, info = tougaard_background(x, y, spec.endpoint_points, spec.tougaard_B, spec.tougaard_C)
+    if spec.is_active:
+        info["scatter"] = float(info.get("B", 0.0))
     return BackgroundResult(bg, spec, info, warnings)

@@ -77,8 +77,10 @@ def test_noise_estimate_matches_poisson(rng):
     x = np.arange(0.0, 20.0, 0.05)
     y = rng.poisson(10000.0, x.size).astype(float)
     rep = estimate_noise(x, y, fwhm_hint=1.0)
-    assert rep.sigma == pytest.approx(100.0, rel=0.2)
-    assert rep.method == "mad_of_savgol_residual"
+    assert rep.sigma == pytest.approx(100.0, rel=0.1)
+    assert rep.method == "mad_of_savgol_residual_corrected"
+    short = estimate_noise(x[:4], y[:4], fwhm_hint=1.0)
+    assert short.method == "mad_of_first_differences" and short.sigma > 0
 
 
 def test_roundtrip_dict():

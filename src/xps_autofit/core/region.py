@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .background import BACKGROUND_TYPES, BackgroundSpec
+from .background import ACTIVE_TYPES, BACKGROUND_MODES, BACKGROUND_TYPES, BackgroundSpec
 from .constraints import DoubletSpec, PeakConstraints
 from .peak_shapes import SHAPES
 
@@ -13,6 +13,31 @@ AUTO = "auto"
 AUTO_BACKGROUNDS = ("shirley", "tougaard", "linear")
 AUTO_SHAPES = ("voigt", "pseudo_voigt")
 OPTIMIZERS = ("leastsq", "global")
+
+
+@dataclass(frozen=True)
+class Variant:
+    """One concrete background / shape combination tried by model selection."""
+
+    background_type: str
+    shape: str
+    background_mode: str = "static"
+
+    @property
+    def active(self) -> bool:
+        return self.background_mode == "active" and self.background_type in ACTIVE_TYPES
+
+    @property
+    def background_label(self) -> str:
+        return f"{self.background_type}(active)" if self.active else self.background_type
+
+    @property
+    def label(self) -> str:
+        return f"{self.background_label}/{self.shape}"
+
+    def __iter__(self):  # (background_type, shape) unpacking stays valid
+        yield self.background_type
+        yield self.shape
 
 
 @dataclass
@@ -55,11 +80,12 @@ class CandidateLine:
 class RegionSpec:
     """Fit recipe for one spectral region.
 
-    ``background.type`` and ``shape`` may be ``"auto"``: every combination of
-    :data:`AUTO_BACKGROUNDS` and :data:`AUTO_SHAPES` is then fitted and the choice is
-    made with the same criterion and physical checks as the number of components.
-    ``optimizer="global"`` adds a differential-evolution search before the
-    Levenberg-Marquardt polish for the first start of every model.
+    ``background.type``, ``background.mode`` and ``shape`` may be ``"auto"``: every
+    combination of :data:`AUTO_BACKGROUNDS` (static and active where it exists) and
+    :data:`AUTO_SHAPES` is then fitted and the choice is made with the same criterion
+    and physical checks as the number of components.  ``optimizer="global"`` adds a
+    differential-evolution search before the Levenberg-Marquardt polish for the
+    first start of every model.
     """
 
     name: str
@@ -114,6 +140,8 @@ class RegionSpec:
             raise ValueError(f"shape must be 'auto' or one of {sorted(SHAPES)}")
         if self.background.type != AUTO and self.background.type not in BACKGROUND_TYPES:
             raise ValueError(f"background type must be 'auto' or one of {BACKGROUND_TYPES}")
+        if self.background.mode != AUTO and self.background.mode not in BACKGROUND_MODES:
+            raise ValueError(f"background mode must be 'auto' or one of {BACKGROUND_MODES}")
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"optimizer must be one of {OPTIMIZERS}")
 
@@ -121,20 +149,34 @@ class RegionSpec:
     def candidate_windows(self) -> list[tuple[str, float, float]]:
         return [(c.label, *c.bounds) for c in self.candidates]
 
-    def variants(self) -> list[tuple[str, str]]:
-        """``(background type, shape)`` combinations to try."""
+    def variants(self) -> list[Variant]:
+        """Background / shape combinations to try (each unpacks as ``(type, shape)``)."""
         bgs = AUTO_BACKGROUNDS if self.background.type == AUTO else (self.background.type,)
         shapes = AUTO_SHAPES if self.shape == AUTO else (self.shape,)
-        return [(b, s) for b in bgs for s in shapes]
+        modes = BACKGROUND_MODES if self.background.mode == AUTO else (self.background.mode,)
+        out: list[Variant] = []
+        for b in bgs:
+            for m in modes:
+                if m == "active" and b not in ACTIVE_TYPES:
+                    continue  # linear/none have no active form; the static one covers it
+                for s in shapes:
+                    out.append(Variant(b, s, m))
+        return out
 
-    def fit_settings(self, background_type: str | None = None, shape: str | None = None) -> Any:
+    def fit_settings(
+        self,
+        background_type: str | None = None,
+        shape: str | None = None,
+        background_mode: str | None = None,
+    ) -> Any:
         """Concrete :class:`FitSettings`; ``"auto"`` entries need explicit choices."""
         from .fitting import FitSettings
 
         bg_type = background_type or self.background.type
         shp = shape or self.shape
-        if bg_type == AUTO or shp == AUTO:
-            raise ValueError("fit_settings() needs a concrete background type and shape")
+        mode = background_mode or self.background.mode
+        if bg_type == AUTO or shp == AUTO or mode == AUTO:
+            raise ValueError("fit_settings() needs a concrete background type, mode and shape")
         bg = BackgroundSpec(
             type=bg_type,
             endpoint_points=self.background.endpoint_points,
@@ -142,6 +184,7 @@ class RegionSpec:
             tolerance=self.background.tolerance,
             tougaard_B=self.background.tougaard_B,
             tougaard_C=self.background.tougaard_C,
+            mode=mode,
         )
         return FitSettings(
             shape=shp,

@@ -187,9 +187,14 @@ QTabBar::tab {{
     color: {INK_SECONDARY};
 }}
 QTabBar::tab:selected {{ background: {PANEL_RAISED}; color: {INK}; }}
-QLabel#readout {{
+QLabel#readout, QPlainTextEdit#readout {{
     font-family: "SF Mono", Menlo, Consolas, monospace;
     color: {INK};
+}}
+QLabel#cursor {{
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    color: {INK_SECONDARY};
+    padding: 0 8px;
 }}
 QLabel#caption {{ color: {MUTED}; font-size: 11px; }}
 QMenuBar {{ background: {PANEL}; border-bottom: 1px solid {BORDER}; }}

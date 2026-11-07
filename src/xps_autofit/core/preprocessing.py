@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_coeffs, savgol_filter
 
 from .spectrum import Spectrum
 
@@ -91,15 +91,32 @@ def _odd_window(points: float, n: int, minimum: int = 5) -> int:
     return max(w, 3)
 
 
+def uniform_grid(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """Resample onto a uniform grid with the median step; returns ``(xu, yu, step)``."""
+    step = float(np.median(np.diff(x)))
+    xu = np.arange(x[0], x[-1] + step / 2, step)
+    return xu, np.interp(xu, x, y), step
+
+
+def detection_window(step: float, fwhm_hint: float, n: int, fraction: float = 0.6) -> int:
+    """Savitzky-Golay window (odd number of points) spanning ``fraction`` of a FWHM.
+
+    Returns 0 when the series is too short or the window would be below five points,
+    in which case no smoothing is applied.
+    """
+    window = _odd_window(fraction * fwhm_hint / step, n)
+    if window < 5 or n <= window:
+        return 0
+    return window
+
+
 def smooth_for_detection(
     x: np.ndarray, y: np.ndarray, fwhm_hint: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resample to a uniform grid and Savitzky-Golay smooth with a window of ~0.6 FWHM."""
-    step = float(np.median(np.diff(x)))
-    xu = np.arange(x[0], x[-1] + step / 2, step)
-    yu = np.interp(xu, x, y)
-    window = _odd_window(0.6 * fwhm_hint / step, xu.size)
-    if window < 5 or xu.size <= window:
+    xu, yu, step = uniform_grid(x, y)
+    window = detection_window(step, fwhm_hint, xu.size)
+    if window == 0:
         return xu, yu
     return xu, savgol_filter(yu, window, polyorder=2)
 
@@ -108,22 +125,33 @@ def estimate_noise(x: np.ndarray, y: np.ndarray, fwhm_hint: float = 1.0) -> Nois
     """Noise from the residual against a smooth version of the data.
 
     The residual's median absolute deviation (scaled by 1.4826) is robust to the peaks
-    themselves.  For counts the Poisson expectation at the baseline is reported too.
+    themselves.  A smoother absorbs part of the noise, so the residual is smaller than
+    the noise by ``sqrt(1 - c0)`` where ``c0`` is the central Savitzky-Golay weight;
+    the estimate is corrected for that.  Without a usable window the estimate falls
+    back to the scaled median absolute first difference.  For counts the Poisson
+    expectation at the baseline is reported too.
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
-    xu, ys = smooth_for_detection(x, y, fwhm_hint)
-    yu = np.interp(xu, x, y)
-    resid = yu - ys
-    mad = float(np.median(np.abs(resid - np.median(resid))))
-    sigma = 1.4826 * mad
+    xu, yu, step = uniform_grid(x, y)
+    window = detection_window(step, fwhm_hint, xu.size)
+    if window:
+        ys = savgol_filter(yu, window, polyorder=2)
+        c0 = float(savgol_coeffs(window, 2)[window // 2])
+        resid = yu - ys
+        mad = float(np.median(np.abs(resid - np.median(resid))))
+        sigma = 1.4826 * mad / np.sqrt(max(1.0 - c0, 1e-6))
+        method = "mad_of_savgol_residual_corrected"
+    else:
+        d = np.diff(yu)
+        mad = float(np.median(np.abs(d - np.median(d)))) if d.size else 0.0
+        sigma = 1.4826 * mad / np.sqrt(2.0)
+        method = "mad_of_first_differences"
     baseline = float(np.percentile(y, 10))
     if sigma <= 0:
         # Flat regions or synthetic noiseless data; fall back to a tiny fraction of range.
         sigma = max(1e-12, 1e-6 * float(np.ptp(y)))
         method = "fallback_ptp_fraction"
-    else:
-        method = "mad_of_savgol_residual"
     peak_height = float(np.max(y) - baseline)
     poisson = float(np.sqrt(max(baseline, 1.0))) if np.all(y >= 0) else None
     return NoiseReport(

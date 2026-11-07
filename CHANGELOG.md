@@ -6,6 +6,62 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
+Phase 3 (part): stronger fitting algorithm, richer desktop application, installers.
+
+### Added - algorithm
+- **Active backgrounds** (`background: {type: shirley | tougaard, mode: active}`,
+  `--background-mode`, GUI *Mode*): the Shirley running integral or the Tougaard
+  loss integral is taken of the *fitted peak envelope* inside the fit, with a free
+  offset and scattering factor (`bg_offset`, `bg_scatter`). Endpoint noise and
+  peak tails no longer bias the background; `mode: auto` tries static and active
+  and chooses with the criterion. Candidate tables, project files and the summary
+  carry the variant (`shirley(active)/voigt`).
+- **Doniach-Sunjic line** (`shape: doniach_sunjic`): asymmetric metallic line
+  (asymmetry `asym`, tail towards high binding energy) convolved numerically with
+  a Gaussian; area defined within +/- 10 widths of the centre; `asym` bounds and
+  `share_asym` in the constraints; reported with its standard error in every
+  table. Not part of `shape: auto`.
+- **Residual diagnostics** in every fit: Durbin-Watson statistic, runs-test z and
+  lag-1 autocorrelation of the weighted residual (`stats.durbin_watson`, ...).
+  A structured residual (DW below `residual_dw_warning`, default 1.0) is a
+  warning; inside the parsimony margin a model with a white residual replaces one
+  with a structured residual, and a structured close model does not make the
+  result ambiguous.
+- **Shoulder detection**: dips of the Savitzky-Golay second derivative with a
+  prominence above 8 times the derivative noise (local Poisson noise included)
+  add starting guesses for unresolved states on the flank of a stronger line.
+- **Noise estimate corrected** for the part of the noise the smoother absorbs
+  (`sqrt(1 - c0)`); without the correction it was 10-30 % low. Short series fall
+  back to the median absolute first difference.
+- **Bootstrap to composition**: replicates keep every component's area, line
+  fraction and component fraction; in recipe runs the region replicates are
+  propagated to `atomic_percent_std` and the 2.5 / 97.5 percentiles in
+  `summary_quantification.csv`. Bootstrap replicates always use the local
+  optimiser and the fitted background as start.
+
+### Added - desktop application
+- Diagnostics tab: monospace readout of statistics, residual diagnostics,
+  background parameters, per-component values, warnings, notes and bootstrap.
+- UNCERTAINTY action (F7): bootstrap of the displayed fit into the Diagnostics tab.
+- Models tab shows the variant and the Durbin-Watson value per candidate; clicking
+  a row shows that candidate (by row, so variants of equal `n` are distinct).
+- Background *Mode* and the Doniach-Sunjic asymmetry bound in the settings panel;
+  `Asym` column in the component table.
+- Drag-and-drop of files and folders, Recent-files menu, Remove spectrum (Delete),
+  Reset view (Home), Save plot image (Ctrl+Shift+S), Copy table (Ctrl+C in a table
+  or Ctrl+Shift+C) as tab-separated text, cursor readout of energy and intensity
+  with a hairline in both panels.
+- Screenshots in `docs/images`, generated offscreen by `examples/make_screenshots.py`.
+
+### Changed
+- `RegionSpec.variants()` returns `Variant` objects (still unpack as
+  `(background_type, shape)`); `fit_settings()` takes `background_mode`.
+- `build_parameters()` takes the data and background when the background is
+  active; `evaluate_total()` is kept for the static case.
+- `PeakGuess` has a `kind` (`maximum` / `shoulder`).
+
 ### Packaging
 - Installers for every release, built and checked by the `Installers` workflow:
   Windows x64 setup program (Inno Setup; optional PATH entry for the command-line

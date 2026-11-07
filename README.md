@@ -11,18 +11,24 @@ desktop application built on the same engine - see the [roadmap](#roadmap).
 1. Reads CSV / TXT / tab-separated exports and ISO 14976 VAMAS (`.vms`) files.
 2. Normalises the energy axis (ascending binding energy, duplicates merged, kinetic
    energy converted) and records every step.
-3. Computes a Linear, Shirley or Tougaard background.
-4. Fits Gaussian, Lorentzian, Voigt or pseudo-Voigt components with
-   area-normalised shapes, spin-orbit doublet constraints (splitting, area ratio,
-   shared widths), width bounds and candidate windows for chemical states.
-5. Chooses the number of components with AICc/BIC **among models that pass physical
-   checks** (positive significant areas, centres inside the region, minimum
-   separation). Ambiguous or non-physical results are flagged instead of silently
-   reported.
+3. Computes a Linear, Shirley or Tougaard background - static (from the region
+   endpoints) or **active**, i.e. generated from the fitted peaks inside the fit so
+   that noisy endpoints and peak tails no longer bias it.
+4. Fits Gaussian, Lorentzian, Voigt, pseudo-Voigt or asymmetric Doniach-Sunjic
+   (metals) components with area-normalised shapes, spin-orbit doublet constraints
+   (splitting, area ratio, shared widths), width bounds and candidate windows for
+   chemical states.
+5. Chooses the number of components - and, on request, the background and the line
+   shape - with AICc/BIC **among models that pass physical checks** (positive
+   significant areas, centres inside the region, minimum separation) and checks the
+   residual for structure (Durbin-Watson, runs test). Ambiguous or non-physical
+   results are flagged instead of silently reported.
 6. Reports relative composition from RSFs (or `NOT_CALCULABLE` when a factor is
-   missing), literature candidates for each component, and the modified Auger
-   parameter for Cu.
+   missing) with bootstrap uncertainties, literature candidates for each component,
+   and the modified Auger parameter for Cu.
 7. Writes CSV, XLSX, JSON, PNG/SVG/PDF and a project file that reproduces the fit.
+
+![Desktop application: Cu 2p3/2 fit with satellites](docs/images/gui_main_cu2p.png)
 
 ## Installation
 
@@ -65,6 +71,13 @@ xps-autofit fit examples/data/p3ht_aged_S2p.csv --recipe p3ht --output results
 # Ad-hoc region: Shirley background, Voigt doublet (S 2p), up to 3 components
 xps-autofit fit s2p.csv --range 160 172 --doublet 1.18 0.5 --max-components 3
 
+# Metallic Au 4f: active Shirley background and the asymmetric Doniach-Sunjic line
+xps-autofit fit au4f.csv --range 80 92 --doublet 3.67 0.75 \
+    --background shirley --background-mode active --shape doniach_sunjic
+
+# Uncertainties: 200 bootstrap replicates, propagated to the atomic percentages
+xps-autofit fit sample.vms --recipe cbo --bootstrap 200 --output results
+
 # Same recipe for a whole folder; summary tables compare samples
 xps-autofit batch ./spectra --recipe cu2o --output results --formats csv,xlsx,json,png
 
@@ -96,12 +109,16 @@ xps-autofit gui
 
 The window follows the layout of instrument software: a sample tree on the left,
 the live spectrum in the centre (raw data, background, components with draggable
-centre lines, envelope, residual with the ±1σ band), fit settings and the
-component / candidate-model tables on the right, a log at the bottom and a status
-lamp (IDLE, FITTING, CONVERGED, AMBIGUOUS, NEEDS REVIEW, MANUAL FIT). AUTO FIT runs
-the same model selection as the command line in a background thread; dragging a
-centre line, editing a cell or adding / removing a component refits; EXPORT and
-BATCH write exactly the files the CLI writes. Details in `docs/gui.md`.
+centre lines, envelope, residual with the ±1σ band, cursor readout), fit settings
+and the Components / Models / Diagnostics tabs on the right, a log at the bottom
+and a status lamp (IDLE, FITTING, CONVERGED, AMBIGUOUS, NEEDS REVIEW, MANUAL FIT).
+AUTO FIT runs the same model selection as the command line in a background
+thread; dragging a centre line, editing a cell or adding / removing a component
+refits; UNCERTAINTY bootstraps the displayed fit; EXPORT and BATCH write exactly
+the files the CLI writes. Files and folders can be dropped on the window; tables
+copy to the clipboard. Details and screenshots in `docs/gui.md`.
+
+![Interactive refit of an S 2p region](docs/images/gui_s2p_manual.png)
 
 ## Recipes
 
@@ -132,16 +149,22 @@ and keeps the best. Each model is then checked:
 | Check                               | Effect                      |
 |-------------------------------------|-----------------------------|
 | Area < 3 sigma from zero            | model rejected              |
+| Height < 3 x local noise            | model rejected              |
 | Centre at the region edge           | model rejected              |
 | Two majors closer than `min_separation` | model rejected          |
 | Width pinned at a bound             | warning                     |
 | Centre outside all candidate windows | warning (or rejection with `require_assignment: true`) |
+| Residual autocorrelated (Durbin-Watson < 1) | warning; breaks ties towards the model with a white residual |
 
 Among the accepted models the lowest AICc (default) or BIC wins. If the next model
-is within 2 units the result is `ambiguous` and the simpler model is reported. If
-nothing passes, the statistically best model is returned with status
+is within 2 units the result is `ambiguous` and the simpler model is reported -
+unless the simpler model leaves a structured residual and the richer one does not.
+If nothing passes, the statistically best model is returned with status
 `needs_review`. Weighted fits (counts available) use chi-square based criteria;
-unweighted fits use the residual-sum-of-squares form.
+unweighted fits use the residual-sum-of-squares form. With `background: {type:
+auto, mode: auto}` and `shape: auto` the background (static / active Shirley,
+Tougaard, linear) and the line shape are chosen the same way. The full procedure
+is in `docs/algorithm.md`.
 
 Doublets are one component: the minor line is tied to the major by
 `center + splitting`, `area * ratio` and shared widths, so S 2p3/2 and 2p1/2 are
@@ -173,7 +196,9 @@ Per run: `summary_regions.csv`, `summary_components.csv`,
 
 Standard errors come from the covariance matrix (rescaled by reduced chi-square
 only for unweighted fits). `--bootstrap N` adds Poisson or residual bootstrap
-percentiles to the project file.
+standard deviations and percentiles (areas, centres, widths, fractions) to the
+project file and propagates them to the atomic percentages in
+`summary_quantification.csv`.
 
 ## File formats
 
@@ -194,9 +219,13 @@ software. Readers for additional formats can be registered with
 
 `tests/` contains synthetic-data tests for:
 
-- peak-shape normalisation and FWHM
-- Shirley recovery of a Shirley-type background; Tougaard endpoint behaviour
+- peak-shape normalisation and FWHM, including the Doniach-Sunjic line and the
+  recovery of its asymmetry from a synthetic metallic line
+- Shirley recovery of a Shirley-type background; Tougaard endpoint behaviour;
+  active Shirley and Tougaard recovering offset and scattering factor
 - recovery of centre, area and FWHM of single and overlapping Voigt peaks
+- shoulder detection, residual diagnostics and the residual tie-break
+- bootstrap propagation to atomic percentages
 - preservation of S 2p splitting and area ratio; correct component count on fresh
   and oxidised P3HT-like spectra; no over-fitting at low signal-to-noise
 - descending and non-uniform energy axes
@@ -212,19 +241,23 @@ programs are part of the v1.0 plan and have not been done yet.
 | Phase | Version | Content |
 |-------|---------|---------|
 | 1 | v0.1.0 | Fitting core, readers, Shirley/Tougaard, Voigt, doublets, model selection, CLI, exports |
-| 2 | v0.2.0 | PySide6 + PyQtGraph desktop app, interactive peak editing (this release) |
+| 2 | v0.2.0 | PySide6 + PyQtGraph desktop app, interactive peak editing |
+| 3 | v0.3.0 | Active backgrounds, Doniach-Sunjic line, residual diagnostics, bootstrap composition errors, diagnostics / uncertainty in the app (this release) |
 | 3 | v0.5.0 | Element library, RSF libraries, comparison views for sample series |
 | 4 | v1.0.0 | Validation against real data and other software (installers already ship with every release) |
 | 5 | v2.0 | Depth profiling, PCA, large batches, model recommendation |
 
 ## 한국어 요약
 
-XPS 스펙트럼을 불러와 배경 제거(Linear·Shirley·Tougaard), Voigt 계열 피팅,
-스핀-궤도 이중선 제약, AICc/BIC와 물리 검사를 함께 쓰는 자동 모델 선택, 조성
-계산, 논문용 그림과 재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는
-도구입니다. 같은 레시피를 여러 시료에 적용해 피크 수를 임의로 늘리지 않고 비교할
-수 있습니다. `xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱 화면으로,
-피크 중심선을 끌어 옮기거나 성분을 더하고 빼며 다시 피팅할 수 있습니다.
+XPS 스펙트럼을 불러와 배경 제거(Linear·Shirley·Tougaard, 피크와 함께 피팅하는
+능동 배경 포함), Voigt 계열과 금속용 비대칭 Doniach-Šunjić 피팅, 스핀-궤도
+이중선 제약, AICc/BIC와 물리 검사·잔차 진단(Durbin-Watson)을 함께 쓰는 자동
+모델 선택, 부트스트랩 불확도가 붙은 조성 계산, 논문용 그림과 재현 가능한
+프로젝트 파일 저장까지 명령 한 줄로 수행하는 도구입니다. 같은 레시피를 여러
+시료에 적용해 피크 수를 임의로 늘리지 않고 비교할 수 있습니다.
+`xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱 화면으로, 피크
+중심선을 끌어 옮기거나 성분을 더하고 빼며 다시 피팅하고, 진단 탭과 불확도
+버튼으로 결과를 점검할 수 있습니다.
 
 ## License
 

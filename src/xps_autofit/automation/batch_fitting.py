@@ -17,7 +17,12 @@ import numpy as np
 import pandas as pd
 
 from ..core.preprocessing import C1S_REFERENCE_WARNING, charge_correct, smooth_for_detection
-from ..core.quantification import QuantResult, atomic_percent, auger_parameter
+from ..core.quantification import (
+    QuantResult,
+    atomic_percent,
+    atomic_percent_samples,
+    auger_parameter,
+)
 from ..core.region import RegionSpec
 from ..core.spectrum import AL_KALPHA_EV, Spectrum
 from ..core.uncertainty import bootstrap
@@ -234,6 +239,7 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
 
     # ---- regions --------------------------------------------------------------------
     quant_items: list[tuple[str, str | None, str | None, float, float | None]] = []
+    quant_samples: dict[str, np.ndarray] = {}
     photo_lines: dict[str, float] = {}
     auger_regions: list[tuple[Spectrum, RegionSpec]] = []
     for spectrum, region in pairs:
@@ -272,9 +278,13 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
             quant_items.append((region.name, region.element, region.line, area, region.rsf))
             extra: dict[str, Any] = {"assignments": rr.assignments, "charge_shift_eV": shift}
             if options.bootstrap > 0:
-                extra["bootstrap"] = bootstrap(
-                    sel.spectrum, best.result, n=options.bootstrap, seed=sel.seed
-                ).to_dict()
+                boot = bootstrap(sel.spectrum, best.result, n=options.bootstrap, seed=sel.seed)
+                extra["bootstrap"] = boot.to_dict()
+                quant_samples[region.name] = (
+                    boot.total_area_samples
+                    if region.rsf_applies_to == "total"
+                    else boot.major_area_samples
+                )
             rr.outputs = write_region_outputs(path, spectrum, sel, options, extra)
         report.regions.append(rr)
 
@@ -294,6 +304,8 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
 
     if quant_items:
         report.quantification = atomic_percent(quant_items)
+        if quant_samples:
+            atomic_percent_samples(report.quantification, quant_samples)
     return report
 
 
@@ -404,6 +416,8 @@ def write_summary(batch: BatchReport, options: RunOptions) -> dict[str, str]:
             if r.selection is not None and r.selection.best is not None:
                 s = r.selection.best.result.stats
                 row.update(redchi=s.redchi, aicc=s.aicc, bic=s.bic, weighted=s.weighted)
+                row["durbin_watson"] = s.durbin_watson
+                row["background"] = r.selection.best.variant
                 row["violations"] = "; ".join(v.message for v in r.selection.best.violations)
                 row["warnings"] = "; ".join(v.message for v in r.selection.best.warnings)
             if r.auger:
@@ -423,6 +437,9 @@ def write_summary(batch: BatchReport, options: RunOptions) -> dict[str, str]:
                         "area": e.area,
                         "rsf": e.rsf,
                         "atomic_percent": e.atomic_percent,
+                        "atomic_percent_std": e.atomic_percent_std,
+                        "atomic_percent_p2_5": e.atomic_percent_p2_5,
+                        "atomic_percent_p97_5": e.atomic_percent_p97_5,
                         "note": f.quantification.note,
                     }
                 )

@@ -2,11 +2,17 @@
 
 Model
 -----
-``I(E) = B(E) + sum_i A_i P_i(E; mu_i, widths_i)`` where ``B`` is computed first
-(:mod:`.background`) and subtracted, ``P_i`` are area-normalised shapes and ``A_i``
-are areas.  Doublets add a *minor* line tied to its major by expressions
-(``center + split``, ``area * ratio``, shared widths), so a doublet is one chemical
-component with one set of free parameters.
+``I(E) = B(E) + sum_i A_i P_i(E; mu_i, widths_i)`` where ``P_i`` are area-normalised
+shapes and ``A_i`` are areas.  Doublets add a *minor* line tied to its major by
+expressions (``center + split``, ``area * ratio``, shared widths), so a doublet is one
+chemical component with one set of free parameters.
+
+The background ``B`` is either *static* (computed first from the data, see
+:mod:`.background`, and subtracted; optionally refined by a free linear term) or
+*active*: ``B(E) = offset + k * S[envelope](E)`` with the Shirley running integral or
+the Tougaard loss integral ``S`` applied to the fitted peak envelope itself, and
+``offset`` and ``k`` as free parameters.  The active form removes the endpoint bias
+of the classical algorithms and keeps background and peaks self-consistent.
 """
 
 from __future__ import annotations
@@ -18,9 +24,15 @@ from typing import Any
 import lmfit
 import numpy as np
 
-from .background import BackgroundResult, BackgroundSpec, compute_background
+from .background import (
+    BackgroundResult,
+    BackgroundSpec,
+    compute_background,
+    shirley_operator,
+    tougaard_kernel,
+)
 from .constraints import DoubletSpec, PeakConstraints
-from .peak_shapes import SHAPES, evaluate, get_shape, total_fwhm
+from .peak_shapes import GL_SHAPES, SHAPES, evaluate, get_shape, total_fwhm
 from .peak_shapes import height as shape_height
 from .spectrum import Spectrum
 
@@ -41,6 +53,7 @@ class ComponentSpec:
     fwhm_l: float = 0.2
     fwhm: float = 1.0
     eta: float = 0.3
+    asym: float = 0.05
     center_bounds: tuple[float, float] | None = None
     vary_center: bool = True
     fwhm_g_bounds: tuple[float, float] | None = None
@@ -55,6 +68,7 @@ class ComponentSpec:
             "fwhm_l": self.fwhm_l,
             "fwhm": self.fwhm,
             "eta": self.eta,
+            "asym": self.asym,
             "center_bounds": list(self.center_bounds) if self.center_bounds else None,
             "vary_center": self.vary_center,
             "fwhm_g_bounds": list(self.fwhm_g_bounds) if self.fwhm_g_bounds else None,
@@ -73,6 +87,7 @@ class ComponentSpec:
             fwhm_l=float(d.get("fwhm_l", 0.2)),
             fwhm=float(d.get("fwhm", 1.0)),
             eta=float(d.get("eta", 0.3)),
+            asym=float(d.get("asym", 0.05)),
             center_bounds=(float(cb[0]), float(cb[1])) if cb else None,
             vary_center=bool(d.get("vary_center", True)),
             fwhm_g_bounds=(float(fb[0]), float(fb[1])) if fb else None,
@@ -93,7 +108,8 @@ class FitSettings:
     scale_covar: bool | None = None
     """``None``: rescale the covariance by reduced chi-square only for unweighted fits."""
     refine_linear_background: bool = False
-    """Add a free offset and slope to absorb small background misestimates."""
+    """Add a free offset and slope to absorb small background misestimates (static
+    background) or a free slope on top of the active background."""
     optimizer: str = "leastsq"
     """``"leastsq"``: Levenberg-Marquardt from the initial values.  ``"global"``: a
     differential-evolution search inside the parameter bounds first, then
@@ -164,6 +180,8 @@ class Component:
     fwhm_l_err: float | None = None
     eta: float | None = None
     eta_err: float | None = None
+    asym: float | None = None
+    asym_err: float | None = None
     fraction: float | None = None
     """Share of the total fitted area in the region (percent), this line only."""
     component_fraction: float | None = None
@@ -192,6 +210,13 @@ class FitStatistics:
     message: str
     nfev: int
     errorbars: bool
+    durbin_watson: float | None = None
+    """``sum (r_i - r_{i-1})**2 / sum r_i**2`` of the (weighted) residual: 2 for white
+    noise, towards 0 for a residual with structure (missing component or background)."""
+    runs_z: float | None = None
+    """Wald-Wolfowitz runs test of the residual signs; strongly negative values mean
+    long runs of one sign, i.e. systematic misfit."""
+    lag1_autocorr: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: _clean(v) for k, v in self.__dict__.items()}
@@ -201,8 +226,9 @@ class FitStatistics:
 class FitResult:
     """Everything a fit produced.
 
-    ``background.values`` is the fixed background (Shirley etc.); ``bg_adjust`` is the
-    optional linear refinement; ``envelope`` is the sum of the peak components only.
+    ``background.values`` is the background proper (static Shirley etc., or the
+    fitted active background); ``bg_adjust`` is the optional linear refinement;
+    ``envelope`` is the sum of the peak components only.
     ``residual = y - background_total - envelope``.
     """
 
@@ -292,10 +318,29 @@ def _clip_inside(value: float, lo: float, hi: float, frac: float = 1e-3) -> floa
     return float(min(max(value, lo + pad), hi - pad))
 
 
+def _active_start(
+    x: np.ndarray, y: np.ndarray, background: BackgroundResult | None
+) -> tuple[float, float]:
+    """Initial ``(offset, scatter)`` of an active background from a static estimate."""
+    if background is not None and "scatter" in background.info:
+        info = background.info
+        offset = float(info.get("offset", info.get("I_low_BE", float(np.mean(y[:3])))))
+        return offset, float(max(info["scatter"], 0.0))
+    offset = float(np.mean(y[:3]))
+    return offset, 0.0
+
+
 def build_parameters(
-    specs: list[ComponentSpec], settings: FitSettings, x: np.ndarray
+    specs: list[ComponentSpec],
+    settings: FitSettings,
+    x: np.ndarray,
+    y: np.ndarray | None = None,
+    background: BackgroundResult | None = None,
 ) -> lmfit.Parameters:
-    """Translate component specs and constraints into an :class:`lmfit.Parameters`."""
+    """Translate component specs and constraints into an :class:`lmfit.Parameters`.
+
+    ``y`` and ``background`` are only needed to initialise an active background.
+    """
     if not specs:
         raise FitError("at least one component is required")
     shape = settings.shape
@@ -351,10 +396,89 @@ def build_parameters(
                         min=bmin,
                         max=bmax,
                     )
-    if settings.refine_linear_background:
+    active = settings.background.is_active
+    if active:
+        if y is None:
+            raise FitError("an active background needs the data to initialise")
+        offset, scatter = _active_start(x, y, background)
+        params.add("bg_offset", value=offset)
+        params.add("bg_scatter", value=scatter, min=0.0)
+        if settings.refine_linear_background:
+            params.add("bg_slope", value=0.0)
+    elif settings.refine_linear_background:
         params.add("bg_offset", value=0.0)
         params.add("bg_slope", value=0.0)
     return params
+
+
+# -------------------------------------------------------------------------- the model
+@dataclass
+class ModelContext:
+    """Everything needed to evaluate the model for one set of parameter values."""
+
+    x: np.ndarray
+    specs: list[ComponentSpec]
+    shape: str
+    refine_bg: bool
+    active: str | None
+    """``None`` (static background), ``"shirley"`` or ``"tougaard"``."""
+    x_center: float
+    kernel: np.ndarray | None = None
+
+    @classmethod
+    def create(
+        cls, x: np.ndarray, specs: list[ComponentSpec], settings: FitSettings
+    ) -> ModelContext:
+        active = settings.background.type if settings.background.is_active else None
+        kernel = None
+        if active == "tougaard":
+            kernel = tougaard_kernel(x, settings.background.tougaard_C)
+        return cls(
+            x,
+            specs,
+            settings.shape,
+            settings.refine_linear_background,
+            active,
+            0.5 * float(x[0] + x[-1]),
+            kernel,
+        )
+
+    def components(self, values: dict[str, float]) -> list[np.ndarray]:
+        return evaluate_components(values, self.specs, self.shape, self.x)
+
+    def envelope(self, values: dict[str, float]) -> np.ndarray:
+        total = np.zeros_like(self.x, dtype=float)
+        for comp in self.components(values):
+            total += comp
+        return total
+
+    def operator(self, envelope: np.ndarray) -> np.ndarray:
+        """``S[envelope]`` of the active background (unit scattering factor)."""
+        if self.active == "shirley":
+            return shirley_operator(self.x, envelope)
+        if self.active == "tougaard" and self.kernel is not None:
+            return self.kernel @ envelope
+        return np.zeros_like(envelope)
+
+    def active_background(self, values: dict[str, float], envelope: np.ndarray) -> np.ndarray:
+        """Fitted background proper (offset + scattering term); zeros when static."""
+        if self.active is None:
+            return np.zeros_like(self.x, dtype=float)
+        return values["bg_offset"] + values["bg_scatter"] * self.operator(envelope)
+
+    def adjust(self, values: dict[str, float]) -> np.ndarray:
+        """Linear refinement term (offset + slope when static; slope only when active)."""
+        out = np.zeros_like(self.x, dtype=float)
+        if self.refine_bg:
+            out += values["bg_slope"] * (self.x - self.x_center)
+            if self.active is None:
+                out += values["bg_offset"]
+        return out
+
+    def total(self, values: dict[str, float]) -> np.ndarray:
+        """Model to compare with the target: ``y`` (active) or ``y_net`` (static)."""
+        env = self.envelope(values)
+        return env + self.active_background(values, env) + self.adjust(values)
 
 
 def evaluate_components(
@@ -376,25 +500,18 @@ def evaluate_total(
     refine_bg: bool,
     x_center: float,
 ) -> np.ndarray:
-    total = np.zeros_like(x, dtype=float)
-    for comp in evaluate_components(values, specs, shape, x):
-        total += comp
-    if refine_bg:
-        total = total + values["bg_offset"] + values["bg_slope"] * (x - x_center)
-    return total
+    """Peak envelope plus the static linear refinement (kept for compatibility)."""
+    ctx = ModelContext(x, specs, shape, refine_bg, None, x_center)
+    return ctx.total(values)
 
 
 def _residual(
     params: lmfit.Parameters,
-    x: np.ndarray,
-    y: np.ndarray,
+    ctx: ModelContext,
+    target: np.ndarray,
     w: np.ndarray | None,
-    specs: list[ComponentSpec],
-    shape: str,
-    refine_bg: bool,
-    x_center: float,
 ) -> np.ndarray:
-    r = evaluate_total(params.valuesdict(), specs, shape, x, refine_bg, x_center) - y
+    r = ctx.total(params.valuesdict()) - target
     return r * w if w is not None else r
 
 
@@ -405,14 +522,21 @@ def fit_peaks(
     settings: FitSettings | None = None,
     background: BackgroundResult | None = None,
 ) -> FitResult:
-    """Fit ``specs`` to ``spectrum`` (already cropped to the region of interest)."""
+    """Fit ``specs`` to ``spectrum`` (already cropped to the region of interest).
+
+    ``background`` may supply a precomputed static background; with an active
+    background it only provides the starting values of offset and scattering factor.
+    """
     settings = settings or FitSettings()
     if spectrum.axis != "binding":
         raise FitError("fit requires a binding-energy axis; call Spectrum.to_binding() first")
+    if settings.background.type == "auto" or settings.background.mode == "auto":
+        raise FitError("background 'auto' must be resolved by model selection before fitting")
     x = spectrum.energy
     y = spectrum.intensity
     if background is None:
         background = compute_background(x, y, settings.background)
+    active = settings.background.is_active
     y_net = y - background.values
 
     sigma = spectrum.sigma if settings.weighting in ("auto", "poisson") else None
@@ -422,13 +546,14 @@ def fit_peaks(
         )
     w = (1.0 / sigma) if sigma is not None else None
     scale_covar = settings.scale_covar if settings.scale_covar is not None else (w is None)
-    x_center = 0.5 * float(x[0] + x[-1])
 
-    params = build_parameters(specs, settings, x)
-    args = (x, y_net, w, specs, settings.shape, settings.refine_linear_background, x_center)
+    params = build_parameters(specs, settings, x, y, background)
+    ctx = ModelContext.create(x, specs, settings)
+    target = y if active else y_net
+    args = (ctx, target, w)
     try:
         if settings.optimizer == "global":
-            params = _global_search(params, args, settings, x, y_net)
+            params = _global_search(params, args, settings, ctx, target)
         res = lmfit.minimize(
             _residual,
             params,
@@ -440,34 +565,41 @@ def fit_peaks(
         )
     except Exception as exc:  # lmfit raises a variety of exception types
         raise FitError(f"optimiser failed: {exc}") from exc
-    return _build_result(res, spectrum, specs, settings, background, y_net, sigma, w, x_center)
+    return _build_result(res, spectrum, specs, settings, background, ctx, sigma, w)
 
 
 def _global_search(
     params: lmfit.Parameters,
     args: tuple[Any, ...],
     settings: FitSettings,
-    x: np.ndarray,
-    y_net: np.ndarray,
+    ctx: ModelContext,
+    target: np.ndarray,
 ) -> lmfit.Parameters:
     """Differential evolution inside finite bounds; returns the best point as a start.
 
-    Areas and the optional linear background term have no natural upper bound, so
-    generous data-driven bounds are set for the search only.
+    Areas and the background terms have no natural upper bound, so generous
+    data-driven bounds are set for the search only.
     """
+    x = ctx.x
     span = float(x[-1] - x[0])
-    peak = float(max(np.max(np.abs(y_net)), 1e-9))
+    peak = float(max(np.ptp(target), np.max(np.abs(target)), 1e-9))
     area_max = 4.0 * peak * span
     search = params.copy()
+    s_max = 0.0
+    if ctx.active is not None:
+        s_max = float(np.max(ctx.operator(ctx.envelope(params.valuesdict()))))
     for name, par in search.items():
         if not par.vary:
             continue
         if name.endswith("_area"):
             par.set(min=0.0, max=area_max)
         elif name == "bg_offset":
-            par.set(min=-peak, max=peak)
+            par.set(min=par.value - peak, max=par.value + peak)
         elif name == "bg_slope":
             par.set(min=-peak / span, max=peak / span)
+        elif name == "bg_scatter":
+            hi = max(3.0 * peak / s_max if s_max > 0 else 0.0, 10.0 * par.value, 1e-6)
+            par.set(min=0.0, max=hi)
         if not (np.isfinite(par.min) and np.isfinite(par.max)):
             raise FitError(f"global search needs finite bounds for {name}")
         par.value = float(np.clip(par.value, par.min, par.max))
@@ -513,31 +645,64 @@ def _clean(v: Any) -> Any:
     return v
 
 
+def residual_diagnostics(r: np.ndarray) -> tuple[float | None, float | None, float | None]:
+    """``(Durbin-Watson, runs-test z, lag-1 autocorrelation)`` of a residual series."""
+    r = np.asarray(r, dtype=float)
+    r = r[np.isfinite(r)]
+    if r.size < 8:
+        return None, None, None
+    ss = float(np.sum(r**2))
+    if ss <= 0:
+        return None, None, None
+    dw = float(np.sum(np.diff(r) ** 2) / ss)
+    lag1 = float(np.sum(r[1:] * r[:-1]) / ss)
+    signs = np.sign(r)
+    signs = signs[signs != 0]
+    n1 = int(np.sum(signs > 0))
+    n2 = int(np.sum(signs < 0))
+    runs_z: float | None = None
+    if n1 > 0 and n2 > 0:
+        runs = 1 + int(np.sum(signs[1:] != signs[:-1]))
+        n = n1 + n2
+        mu = 2.0 * n1 * n2 / n + 1.0
+        var = 2.0 * n1 * n2 * (2.0 * n1 * n2 - n) / (n**2 * (n - 1))
+        if var > 0:
+            runs_z = float((runs - mu) / math.sqrt(var))
+    return dw, runs_z, lag1
+
+
 def _build_result(
     res: Any,
     spectrum: Spectrum,
     specs: list[ComponentSpec],
     settings: FitSettings,
     background: BackgroundResult,
-    y_net: np.ndarray,
+    ctx: ModelContext,
     sigma: np.ndarray | None,
     w: np.ndarray | None,
-    x_center: float,
 ) -> FitResult:
     x = spectrum.energy
+    y = spectrum.intensity
     shape = settings.shape
     names = SHAPES[shape].params
     values = res.params.valuesdict()
-    comp_values = evaluate_components(values, specs, shape, x)
+    comp_values = ctx.components(values)
     envelope = np.zeros_like(x, dtype=float)
     for cv in comp_values:
         envelope += cv
-    if settings.refine_linear_background:
-        bg_adjust = values["bg_offset"] + values["bg_slope"] * (x - x_center)
-    else:
-        bg_adjust = np.zeros_like(x, dtype=float)
-    residual = y_net - bg_adjust - envelope
+    bg_adjust = ctx.adjust(values)
     warnings: list[str] = list(background.warnings)
+    if ctx.active is not None:
+        bg_values = ctx.active_background(values, envelope)
+        info = {
+            **background.info,
+            "mode": "active",
+            "offset": float(values["bg_offset"]),
+            "scatter": float(values["bg_scatter"]),
+        }
+        background = BackgroundResult(bg_values, settings.background, info, list(warnings))
+    y_net = y - background.values
+    residual = y_net - bg_adjust - envelope
 
     uvars = None
     if getattr(res, "errorbars", False):
@@ -563,7 +728,7 @@ def _build_result(
                     fw_err = float((0.5346 * ufl + umath.sqrt(0.2166 * ufl**2 + ufg**2)).std_dev)
                 except Exception:  # pragma: no cover
                     fw_err = None
-        else:
+        elif shape not in GL_SHAPES:
             fw_err = _stderr(p[f"{key}_fwhm"])
         comp = Component(
             label=f"{s.label} (minor)" if minor else s.label,
@@ -583,6 +748,8 @@ def _build_result(
             fwhm_l_err=_stderr(p[f"{key}_fwhm_l"]) if "fwhm_l" in names else None,
             eta=widths.get("eta"),
             eta_err=_stderr(p[f"{key}_eta"]) if "eta" in names else None,
+            asym=widths.get("asym"),
+            asym_err=_stderr(p[f"{key}_asym"]) if "asym" in names else None,
             values=vals,
         )
         components.append(comp)
@@ -606,6 +773,7 @@ def _build_result(
     aic = loglike_term + 2 * k
     aicc = aic + (2 * k * (k + 1) / (n - k - 1)) if n - k - 1 > 0 else float("inf")
     bic = loglike_term + k * math.log(n)
+    dw, runs_z, lag1 = residual_diagnostics(residual * w if w is not None else residual)
     stats = FitStatistics(
         ndata=n,
         nvarys=k,
@@ -621,6 +789,9 @@ def _build_result(
         message=str(res.message),
         nfev=int(res.nfev),
         errorbars=bool(getattr(res, "errorbars", False)),
+        durbin_watson=dw,
+        runs_z=runs_z,
+        lag1_autocorr=lag1,
     )
     if not res.success:
         warnings.append(f"optimiser reported failure: {res.message}")
@@ -646,7 +817,7 @@ def _build_result(
         )
     return FitResult(
         x=x,
-        y=spectrum.intensity,
+        y=y,
         background=background,
         bg_adjust=bg_adjust,
         y_net=y_net,
@@ -674,9 +845,11 @@ def specs_from_result(result: FitResult) -> list[ComponentSpec]:
             new.fwhm_g = c.fwhm_g
         if c.fwhm_l is not None:
             new.fwhm_l = c.fwhm_l
-        if result.settings.shape != "voigt":
+        if result.settings.shape not in GL_SHAPES:
             new.fwhm = c.fwhm
         if c.eta is not None:
             new.eta = c.eta
+        if c.asym is not None:
+            new.asym = c.asym
         out.append(new)
     return out

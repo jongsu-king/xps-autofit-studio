@@ -85,10 +85,13 @@ class PeakConstraints:
     fwhm_l: tuple[float, float] = (0.02, 1.0)
     fwhm: tuple[float, float] = (0.3, 3.5)
     eta: tuple[float, float] = (0.0, 1.0)
+    asym: tuple[float, float] = (0.0, 0.5)
+    """Doniach-Sunjic asymmetry (alpha) bounds; 0.05-0.2 is typical of metals."""
     share_fwhm_g: bool = False
     share_fwhm_l: bool = True
     share_fwhm: bool = False
     share_eta: bool = True
+    share_asym: bool = True
     min_separation: float = 0.3
     """Minimum distance between two major components (eV) for a model to count as
     physically distinct."""
@@ -96,13 +99,20 @@ class PeakConstraints:
     """Centres must lie at least this far (eV) inside the region."""
     significance_sigma: float = 3.0
     """A component whose area is below this many standard errors is 'insignificant'."""
+    residual_dw_warning: float = 1.0
+    """Warn when the Durbin-Watson statistic of the residual falls below this value
+    (2 for white noise; small values mean the residual is structured)."""
+
+    WIDTH_NAMES = ("fwhm_g", "fwhm_l", "fwhm", "eta", "asym")
 
     def __post_init__(self) -> None:
-        for name in ("fwhm_g", "fwhm_l", "fwhm", "eta"):
+        for name in self.WIDTH_NAMES:
             lo, hi = getattr(self, name)
             if not lo < hi:
                 raise ValueError(f"{name} bounds must satisfy min < max, got {(lo, hi)}")
             setattr(self, name, (float(lo), float(hi)))
+        if self.asym[0] < 0 or self.asym[1] > 0.5:
+            raise ValueError("asym bounds must lie within [0, 0.5]")
         if self.min_separation < 0 or self.edge_margin < 0:
             raise ValueError("min_separation and edge_margin must be >= 0")
 
@@ -119,13 +129,16 @@ class PeakConstraints:
             "fwhm_l": list(self.fwhm_l),
             "fwhm": list(self.fwhm),
             "eta": list(self.eta),
+            "asym": list(self.asym),
             "share_fwhm_g": self.share_fwhm_g,
             "share_fwhm_l": self.share_fwhm_l,
             "share_fwhm": self.share_fwhm,
             "share_eta": self.share_eta,
+            "share_asym": self.share_asym,
             "min_separation": self.min_separation,
             "edge_margin": self.edge_margin,
             "significance_sigma": self.significance_sigma,
+            "residual_dw_warning": self.residual_dw_warning,
         }
 
     @classmethod
@@ -136,7 +149,7 @@ class PeakConstraints:
         for k, v in d.items():
             if k not in cls.__dataclass_fields__:
                 continue
-            kw[k] = tuple(v) if k in ("fwhm_g", "fwhm_l", "fwhm", "eta") else v
+            kw[k] = tuple(v) if k in cls.WIDTH_NAMES else v
         return cls(**kw)
 
 
@@ -219,6 +232,8 @@ def check_physical(
                 bmin, bmax = spec.fwhm_g_bounds
             span = bmax - bmin
             if value - bmin <= 0.01 * span:
+                if pname == "asym":
+                    continue  # a symmetric line is the expected case, not a warning
                 warnings.append(
                     Violation(
                         "width_at_lower_bound",
@@ -259,4 +274,17 @@ def check_physical(
                     "violation" if require_assignment else "warning",
                 )
                 (violations if require_assignment else warnings).append(v)
+
+    dw = result.stats.durbin_watson
+    if dw is not None and result.stats.ndata >= 30 and dw < constraints.residual_dw_warning:
+        warnings.append(
+            Violation(
+                "structured_residual",
+                f"residual is autocorrelated (Durbin-Watson {dw:.2f} < "
+                f"{constraints.residual_dw_warning:g}); a component or background term "
+                "may be missing",
+                None,
+                "warning",
+            )
+        )
     return violations, warnings
