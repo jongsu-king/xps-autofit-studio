@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 from pathlib import Path
 
@@ -39,7 +40,14 @@ def window(app):
     win.show()
     app.processEvents()
     yield win
+    # Release the Qt objects while the interpreter is healthy: windows that survive
+    # until interpreter exit are freed in an arbitrary order and can abort the process
+    # after the tests have passed.
     win.close()
+    win.deleteLater()
+    app.processEvents()
+    del win
+    gc.collect()
     app.processEvents()
 
 

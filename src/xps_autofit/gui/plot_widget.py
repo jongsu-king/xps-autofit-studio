@@ -6,6 +6,8 @@ Major components carry a draggable centre line; releasing it emits
 
 from __future__ import annotations
 
+import contextlib
+
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
@@ -105,6 +107,18 @@ class SpectrumPlot(QWidget):
     def reset_view(self) -> None:
         if self._spectrum is not None:
             self._fit_view(self._spectrum.energy)
+
+    def shutdown(self) -> None:
+        """Disconnect the mouse proxy so no timer or scene signal outlives the widget.
+
+        Qt objects that are still connected when the interpreter exits are released
+        in an arbitrary order; doing it here keeps the shutdown deterministic.
+        """
+        proxy = getattr(self, "_proxy", None)
+        if proxy is not None:
+            with contextlib.suppress(RuntimeError, TypeError):  # already gone
+                proxy.disconnect()
+            self._proxy = None
 
     def show_spectrum(self, spectrum: Spectrum, title: str = "") -> None:
         self._reset()

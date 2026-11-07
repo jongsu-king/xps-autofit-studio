@@ -254,6 +254,10 @@ class MainWindow(QMainWindow):
         self.log_panel.log(text)
         self.status_text.setText(text.splitlines()[0][:160])
 
+    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        self.plot.shutdown()
+        super().closeEvent(event)
+
     def _job_actions(self) -> tuple[QAction, ...]:
         return (self.act_fit, self.act_refit, self.act_batch, self.act_export, self.act_uncertainty)
 

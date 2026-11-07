@@ -3,6 +3,7 @@ recent files, copyable tables, model picking by row, background mode in the pane
 
 from __future__ import annotations
 
+import gc
 import os
 from pathlib import Path
 
@@ -42,6 +43,10 @@ def window(app):
     app.processEvents()
     yield win
     win.close()
+    win.deleteLater()
+    app.processEvents()
+    del win
+    gc.collect()
     app.processEvents()
 
 
