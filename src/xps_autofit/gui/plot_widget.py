@@ -69,6 +69,7 @@ class SpectrumPlot(QWidget):
         self.main.legend = self.legend
         self.title_item = pg.TextItem("", color=INK_SECONDARY, anchor=(0, 1))
         self._lines: dict[str, pg.InfiniteLine] = {}
+        self._marks: list[pg.InfiniteLine] = []
         self._spectrum: Spectrum | None = None
         # Crosshair: a thin vertical hairline that follows the mouse in both panels.
         self._cross_main = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(GRID, width=1))
@@ -86,6 +87,7 @@ class SpectrumPlot(QWidget):
         self.resid.clear()
         self.legend.clear()
         self._lines.clear()
+        self._marks = []
         self.main.addItem(self._cross_main, ignoreBounds=True)
         self.resid.addItem(self._cross_resid, ignoreBounds=True)
 
@@ -215,6 +217,29 @@ class SpectrumPlot(QWidget):
 
     def line_positions(self) -> dict[str, float]:
         return {label: float(line.value()) for label, line in self._lines.items()}
+
+    def mark_lines(self, marks: list[tuple[str, float]], color: str = INK_SECONDARY) -> None:
+        """Label fixed energies on the spectrum (identified element lines)."""
+        for item in self._marks:
+            self.main.removeItem(item)
+        self._marks = []
+        for i, (label, energy) in enumerate(marks):
+            line = pg.InfiniteLine(
+                pos=energy,
+                angle=90,
+                movable=False,
+                pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine),
+                label=label,
+                labelOpts={
+                    "position": 0.92 - 0.06 * (i % 8),
+                    "color": color,
+                    "fill": (20, 20, 19, 170),
+                    "anchors": [(1, 0.5), (0, 0.5)],
+                },
+            )
+            line.setZValue(-5)
+            self.main.addItem(line, ignoreBounds=True)
+            self._marks.append(line)
 
     def export_png(self, path: str) -> None:
         from pyqtgraph.exporters import ImageExporter

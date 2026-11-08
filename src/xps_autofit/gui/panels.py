@@ -30,8 +30,9 @@ from PySide6.QtWidgets import (
 from ..automation.model_selection import SelectionResult
 from ..core.background import BACKGROUND_MODES, BACKGROUND_TYPES, BackgroundSpec
 from ..core.constraints import DoubletSpec, PeakConstraints
-from ..core.fitting import FitResult
+from ..core.fitting import LOSSES, FitResult
 from ..core.peak_shapes import SHAPES
+from ..core.quality import grade_fit
 from ..core.region import RegionSpec
 from ..core.spectrum import Spectrum
 from ..core.uncertainty import BootstrapResult
@@ -352,6 +353,36 @@ class FitSettingsPanel(QWidget):
         f.addRow("Min improvement", self.min_improvement)
         f.addRow("", self.auto_refit)
         outer.addWidget(g_sel)
+
+        g_rob = QGroupBox("ROBUSTNESS")
+        f = QFormLayout(g_rob)
+        self.loss = QComboBox()
+        self.loss.addItems(list(LOSSES))
+        self.loss.setToolTip(
+            "linear: ordinary least squares.\n"
+            "soft_l1 / huber / cauchy / arctan: residuals beyond the scale pull less,\n"
+            "so spikes and misfit tails distort the components less."
+        )
+        self.loss_scale = _dspin(0.5, 20, 3.0, 0.5, 1)
+        self.loss_scale.setToolTip("Residual size (in sigma) where down-weighting starts")
+        self.mask_spikes = QCheckBox("Mask spikes above")
+        self.spike_sigma = _dspin(3.0, 30, 6.0, 0.5, 1)
+        self.spike_sigma.setToolTip(
+            "Exclude isolated points this many local standard deviations off the\n"
+            "running median (cosmic-ray hits, detector glitches)"
+        )
+        sp = QHBoxLayout()
+        sp.addWidget(self.mask_spikes)
+        sp.addWidget(self.spike_sigma)
+        sp.addWidget(QLabel("sigma"))
+        f.addRow("Loss", self.loss)
+        f.addRow("Loss scale", self.loss_scale)
+        f.addRow("", sp)
+        outer.addWidget(g_rob)
+        self.loss.currentTextChanged.connect(lambda t: self.loss_scale.setEnabled(t != "linear"))
+        self.loss_scale.setEnabled(False)
+        self.mask_spikes.toggled.connect(self.spike_sigma.setEnabled)
+        self.spike_sigma.setEnabled(False)
         outer.addStretch(1)
 
         self.element.currentTextChanged.connect(self._auto_doublet)
@@ -445,6 +476,11 @@ class FitSettingsPanel(QWidget):
         self.optimizer.setCurrentText(region.optimizer)
         self.n_starts.setValue(region.n_starts)
         self.min_improvement.setValue(region.min_improvement)
+        self.loss.setCurrentText(region.loss)
+        self.loss_scale.setValue(region.loss_scale)
+        self.mask_spikes.setChecked(region.spike_sigma is not None)
+        if region.spike_sigma is not None:
+            self.spike_sigma.setValue(region.spike_sigma)
 
     def region_spec(self, spectrum: Spectrum) -> RegionSpec:
         """RegionSpec from the panel; candidates/RSF come from the selected recipe region."""
@@ -497,6 +533,9 @@ class FitSettingsPanel(QWidget):
             criterion=self.criterion.currentText(),
             min_improvement=self.min_improvement.value(),
             optimizer=self.optimizer.currentText(),
+            loss=self.loss.currentText(),
+            loss_scale=self.loss_scale.value(),
+            spike_sigma=self.spike_sigma.value() if self.mask_spikes.isChecked() else None,
             require_assignment=base.require_assignment if base is not None else False,
         )
 
@@ -582,17 +621,20 @@ class ComponentsTable(CopyableTable):
 
 
 # ------------------------------------------------------------------- model table
+GRADE_COLORS = {"A": "ok", "B": "ok", "C": "ambiguous", "D": "failed", "E": "failed"}
+
+
 class ModelTable(CopyableTable):
     modelPicked = Signal(int)
     """Index of the clicked candidate in ``SelectionResult.candidates``."""
 
-    HEADERS = ["n", "Model", "Criterion", "χ²red", "DW", "Physical", "Reasons"]
+    HEADERS = ["n", "Model", "Criterion", "χ²red", "DW", "Grade", "Physical", "Reasons"]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.verticalHeader().setVisible(False)
-        self.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        self.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.cellClicked.connect(self._picked)
@@ -613,12 +655,14 @@ class ModelTable(CopyableTable):
                 v.message for v in c.warnings
             )
             dw = c.result.stats.durbin_watson
+            grade = c.grade.letter if c.grade else "-"
             cells = [
                 str(c.n_components),
                 c.variant,
                 f"{c.criterion_value:.1f}",
                 f"{c.result.stats.redchi:.2f}",
                 f"{dw:.2f}" if dw is not None else "-",
+                grade,
                 "pass" if c.physical_ok else "FAIL",
                 reasons,
             ]
@@ -627,10 +671,13 @@ class ModelTable(CopyableTable):
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 if sel.best is c:
                     item.setForeground(QColor(STATUS_COLORS["ok"]))
-                if col == 5 and not c.physical_ok:
+                if col == 6 and not c.physical_ok:
                     item.setForeground(QColor(STATUS_COLORS["failed"]))
                 if col == 4 and dw is not None and dw < 1.0:
                     item.setForeground(QColor(STATUS_COLORS["ambiguous"]))
+                if col == 5 and grade in GRADE_COLORS:
+                    item.setForeground(QColor(STATUS_COLORS[GRADE_COLORS[grade]]))
+                    item.setToolTip(c.grade.description if c.grade else "")
                 self.setItem(r, col, item)
 
 
@@ -685,6 +732,22 @@ def diagnostics_text(
             f"RESIDUAL    Durbin-Watson {s.durbin_watson:.2f} ({verdict}; 2 = white noise)   "
             f"runs z {rz}   lag-1 r {lag}"
         )
+    best = selection.best if selection is not None else None
+    if best is not None and best.result is result and best.grade is not None:
+        grade = best.grade
+    else:
+        grade = grade_fit(result)
+    lines.append(f"QUALITY     grade {grade.letter} ({grade.score:.0f}/100) - {grade.description}")
+    lines.extend(f"              {r}" for r in grade.reasons)
+    extras = []
+    if s.max_correlation is not None:
+        extras.append(f"max cross-component |r| {s.max_correlation:.3f} ({s.max_correlation_pair})")
+    if s.n_masked:
+        extras.append(f"{s.n_masked} point(s) masked as spikes")
+    if s.loss != "linear":
+        extras.append(f"robust loss {s.loss}")
+    if extras:
+        lines.append("PARAMETERS  " + "   ".join(extras))
     info = bg.info
     bg_line = f"BACKGROUND  {bg.spec.type} {info.get('mode', bg.spec.mode)}"
     if "offset" in info:

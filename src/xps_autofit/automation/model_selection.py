@@ -19,9 +19,19 @@ import numpy as np
 
 from ..core.background import BackgroundResult, compute_background
 from ..core.constraints import Violation, check_physical
-from ..core.fitting import ComponentSpec, FitError, FitResult, fit_peaks, specs_from_result
+from ..core.fitting import (
+    MAX_MASKED_FRACTION,
+    MAX_SPIKE_STEP,
+    ComponentSpec,
+    FitError,
+    FitResult,
+    detect_spikes,
+    fit_peaks,
+    specs_from_result,
+)
 from ..core.peak_shapes import GL_SHAPES, SHAPES, area_from_height, evaluate
 from ..core.preprocessing import NoiseReport, estimate_noise, smooth_for_detection
+from ..core.quality import FitGrade, grade_fit
 from ..core.region import CandidateLine, RegionSpec, Variant
 from ..core.spectrum import Spectrum
 from .peak_detection import PeakGuess, detect_peaks, pair_doublets, residual_peak
@@ -38,6 +48,12 @@ class Candidate:
     background_type: str = "shirley"
     shape: str = "voigt"
     background_mode: str = "static"
+    grade: FitGrade | None = None
+    """Quality grade (A-E) from :func:`xps_autofit.core.quality.grade_fit`."""
+
+    def __post_init__(self) -> None:
+        if self.grade is None:
+            self.grade = grade_fit(self.result, self.violations, self.warnings)
 
     @property
     def physical_ok(self) -> bool:
@@ -60,6 +76,7 @@ class Candidate:
             "criterion": self.criterion,
             "criterion_value": self.criterion_value,
             "physical_ok": self.physical_ok,
+            "grade": self.grade.to_dict() if self.grade else None,
             "violations": [v.to_dict() for v in self.violations],
             "warnings": [v.to_dict() for v in self.warnings],
             "fit": self.result.to_dict(include_arrays=include_arrays),
@@ -328,6 +345,30 @@ def make_starts(
     return starts
 
 
+def despiked_intensity(
+    spec: Spectrum, spike_sigma: float | None, notes: list[str], tag: str = ""
+) -> np.ndarray:
+    """Intensity with spike points replaced by the running median, for the background
+    and the peak detection only (the fit itself excludes those points).
+
+    Uses the same detector and limits as :func:`fit_peaks`, so the two agree on which
+    points are spikes.
+    """
+    y = spec.intensity
+    if spike_sigma is None or spec.step > MAX_SPIKE_STEP:
+        return y
+    mask = detect_spikes(y, spec.sigma, spike_sigma)
+    n_mask = int(mask.sum())
+    if n_mask == 0 or n_mask > MAX_MASKED_FRACTION * y.size:
+        return y
+    from scipy.signal import medfilt
+
+    clean = y.copy()
+    clean[mask] = medfilt(y, kernel_size=5)[mask]
+    notes.append(f"{tag}: {n_mask} spike point(s) replaced for background and detection")
+    return clean
+
+
 def _fit_variant(
     spec: Spectrum,
     region: RegionSpec,
@@ -340,11 +381,12 @@ def _fit_variant(
 ) -> tuple[list[Candidate], BackgroundResult, NoiseReport, list[PeakGuess]]:
     bg_type, shape = variant.background_type, variant.shape
     settings = region.fit_settings(bg_type, shape, variant.background_mode)
-    bg = compute_background(spec.energy, spec.intensity, settings.background)
-    y_net = spec.intensity - bg.values
+    tag = variant.label
+    y_bg = despiked_intensity(spec, region.spike_sigma, notes, tag)
+    bg = compute_background(spec.energy, y_bg, settings.background)
+    y_net = y_bg - bg.values
     fwhm_hint = fwhm_hint_for(region, shape)
     noise = estimate_noise(spec.energy, y_net, fwhm_hint)
-    tag = variant.label
     for w in bg.warnings:
         notes.append(f"{tag}: {w}")
 

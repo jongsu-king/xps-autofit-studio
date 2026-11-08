@@ -1,0 +1,52 @@
+name: Bug report
+description: A fit, a reader, an export or the desktop application did something wrong
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The fastest way to a fix is a project file: run with
+        `--formats json` (or EXPORT in the app) and attach the `.json`; it contains the
+        data, every setting and the start values, so the fit can be reproduced exactly.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`xps-autofit --version`, or Help > About in the app"
+      placeholder: "0.4.0 (Windows installer)"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Fitting / model selection
+        - Background
+        - Survey identification
+        - File reader (CSV / VAMAS)
+        - Export / tables / plots
+        - Desktop application
+        - Installer / packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got (numbers help).
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Command line or the steps in the app. Attach the project JSON or a data file if you can (synthetic data from `xps-autofit synth` is fine).
+      render: shell
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Operating system, Python version (for pip installs), spectrometer / export format.

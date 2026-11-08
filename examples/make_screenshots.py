@@ -92,6 +92,15 @@ def main(out_dir: str | Path) -> list[Path]:
         p = out / "gui_s2p_manual.png"
         win.grab().save(str(p))
         written.append(p)
+
+        # 4. Survey with the identified element lines marked (IDENTIFY)
+        keys = win.load_files([str(data / "cu2o_survey.csv")])
+        win.select_key(keys[-1])
+        win.identify_current()
+        app.processEvents()
+        p = out / "gui_survey_identify.png"
+        win.grab().save(str(p))
+        written.append(p)
         win.close()
         app.processEvents()
     return written

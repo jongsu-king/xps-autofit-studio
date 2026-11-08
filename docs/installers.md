@@ -14,6 +14,16 @@ the engine; nothing else needs to be installed.
 
 `SHA256SUMS.txt` on the release page lists the checksums of all files.
 
+## Updating
+
+The desktop application checks the GitHub Releases API once a day (when *Help >
+Check for updates at startup* is on) and shows a newer version as a link in the
+status bar that opens the installer for your operating system. Install it over the
+existing version: the Windows setup program replaces the previous installation, the
+macOS DMG replaces the app in Applications, and `apt install ./…deb` upgrades the
+package. `xps-autofit update-check` does the same from the command line, and
+`XPS_AUTOFIT_NO_UPDATE_CHECK=1` turns the automatic check off.
+
 ## Unsigned builds
 
 The builds are **not code-signed**:

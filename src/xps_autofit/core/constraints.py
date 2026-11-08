@@ -102,6 +102,12 @@ class PeakConstraints:
     residual_dw_warning: float = 1.0
     """Warn when the Durbin-Watson statistic of the residual falls below this value
     (2 for white noise; small values mean the residual is structured)."""
+    correlation_warning: float = 0.98
+    """Warn when two free parameters of different components are correlated above
+    this value: the data then do not determine the components independently."""
+    relative_error_warning: float = 0.5
+    """Warn when a component's area has a standard error above this fraction of its
+    value."""
 
     WIDTH_NAMES = ("fwhm_g", "fwhm_l", "fwhm", "eta", "asym")
 
@@ -139,6 +145,8 @@ class PeakConstraints:
             "edge_margin": self.edge_margin,
             "significance_sigma": self.significance_sigma,
             "residual_dw_warning": self.residual_dw_warning,
+            "correlation_warning": self.correlation_warning,
+            "relative_error_warning": self.relative_error_warning,
         }
 
     @classmethod
@@ -287,4 +295,30 @@ def check_physical(
                 "warning",
             )
         )
+
+    rmax = result.stats.max_correlation
+    if rmax is not None and rmax > constraints.correlation_warning:
+        warnings.append(
+            Violation(
+                "degenerate_parameters",
+                f"parameters {result.stats.max_correlation_pair} are {100 * rmax:.1f} % "
+                f"correlated (> {100 * constraints.correlation_warning:g} %); the data do not "
+                "determine these components independently",
+                None,
+                "warning",
+            )
+        )
+
+    for c in majors:
+        if c.area > 0 and c.area_err is not None:
+            rel = c.area_err / c.area
+            if rel > constraints.relative_error_warning:
+                warnings.append(
+                    Violation(
+                        "large_relative_error",
+                        f"{c.label}: area uncertain to {100 * rel:.0f} %",
+                        c.label,
+                        "warning",
+                    )
+                )
     return violations, warnings

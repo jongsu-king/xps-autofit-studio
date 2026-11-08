@@ -54,8 +54,35 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
    as tab-separated text for a spreadsheet.
 7. **BATCH** (Ctrl+B) applies a recipe to files or folders and shows the summary
    table; the per-file outputs land in the chosen folder.
+8. **IDENTIFY** (F8) runs the survey element identification on the selected
+   spectrum: the elements whose lines explain the peaks are listed with their
+   confidence, matched and missing lines and ambiguities, and the matched lines are
+   marked on the spectrum (see `algorithm.md`, section 11).
 
 ![Interactive refit of an S 2p region with two doublets](images/gui_s2p_manual.png)
+
+![Survey with identified element lines](images/gui_survey_identify.png)
+
+## Robustness and quality
+
+The *Robustness* group of the settings panel selects the loss function
+(`linear` or a robust loss with its scale) and the spike mask; both are explained
+in `algorithm.md`, section 10. The Models tab carries a **Grade** column (A-E) and
+the Diagnostics tab a QUALITY line with every deduction, and a PARAMETERS line with
+the largest cross-component correlation, the number of masked points and the loss
+in use.
+
+## Updates
+
+At most once a day, when *Help > Check for updates at startup* is on, the
+application asks the GitHub Releases API for the latest version (one anonymous
+request; nothing but the version string is sent). A newer release appears as a
+clickable link in the status bar that opens the installer for the running
+operating system, or the release page. *Help > Check for updates…* runs the check
+on demand with *Download*, *Skip this version* and *Later*. Managed installations
+can disable the check with the environment variable
+`XPS_AUTOFIT_NO_UPDATE_CHECK=1`; the engine, the command line and batch runs never
+check unless `xps-autofit update-check` is called.
 
 ## Notes
 

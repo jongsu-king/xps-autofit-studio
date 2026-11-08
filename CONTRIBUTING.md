@@ -37,7 +37,12 @@ CI runs the same commands on Linux, macOS and Windows with Python 3.11-3.13.
   or failed physical checks are reported as such (`NOT_CALCULABLE`,
   `needs_review`), never replaced by a guess.
 - **Reference data need a source.** Entries in `xps_autofit/database` carry a note
-  on where the value comes from.
+  on where the value comes from. Survey lines (`survey_lines.py`) are typical
+  positions, rounded to 0.5 eV where handbooks disagree, with Scofield-like relative
+  intensities; add every principal line of a new element, not just the strongest.
+- **The engine never talks to the network.** The release check lives in
+  `update_check.py`, runs only from the desktop application or `xps-autofit
+  update-check`, and sends nothing but the version string.
 - **Tests use synthetic data with known truth** (`xps_autofit.synthetic`). Measured
   spectra may be used for integration tests only when the data owner agreed, and
   they are not committed to the repository.

@@ -81,6 +81,25 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
         default="leastsq",
         help="global: differential evolution before Levenberg-Marquardt (slower, robust)",
     )
+    p.add_argument(
+        "--loss",
+        choices=["linear", "soft_l1", "huber", "cauchy", "arctan"],
+        default="linear",
+        help="robust loss: residuals beyond --loss-scale pull less (spikes, misfit tails)",
+    )
+    p.add_argument(
+        "--loss-scale",
+        type=float,
+        default=3.0,
+        help="robust loss: residual size in sigma where down-weighting starts",
+    )
+    p.add_argument(
+        "--mask-spikes",
+        type=float,
+        default=None,
+        metavar="SIGMA",
+        help="exclude isolated points more than SIGMA local std. dev. off the running median",
+    )
     p.add_argument("--min-components", type=int, default=1)
     p.add_argument("--max-components", type=int, default=3)
     p.add_argument(
@@ -132,6 +151,26 @@ def build_parser() -> argparse.ArgumentParser:
     pv = sub.add_parser("verify", help="re-run a saved project and compare")
     pv.add_argument("project", nargs="+")
 
+    pid = sub.add_parser("identify", help="list the elements whose lines explain a survey")
+    pid.add_argument("files", nargs="+")
+    pid.add_argument(
+        "--tolerance", type=float, default=1.5, help="eV between a peak and the typical position"
+    )
+    pid.add_argument("--min-confidence", type=float, default=0.3)
+    pid.add_argument(
+        "--charge-shift",
+        type=float,
+        default=0.0,
+        help="eV by which the measured scale is displaced (measured C 1s - 284.8)",
+    )
+    pid.add_argument("--photon-energy", type=float, default=None)
+    pid.add_argument("--elements", default=None, help="comma list restricting the search")
+    pid.add_argument("--json", action="store_true", help="print the full result as JSON")
+
+    pu = sub.add_parser("update-check", help="compare this version with the latest release")
+    pu.add_argument("--json", action="store_true")
+    pu.add_argument("--timeout", type=float, default=6.0)
+
     sub.add_parser("gui", help="start the desktop application")
     return p
 
@@ -159,6 +198,9 @@ def _adhoc_recipe(args: argparse.Namespace) -> Recipe:
         refine_background=not args.no_refine_background,
         shape=args.shape,
         optimizer=args.optimizer,
+        loss=args.loss,
+        loss_scale=args.loss_scale,
+        spike_sigma=args.mask_spikes,
         constraints=PeakConstraints(**c_kwargs),  # type: ignore[arg-type]
         doublet=doublet,
         min_components=args.min_components,
@@ -205,13 +247,18 @@ def _print_report(batch: BatchReport) -> None:
                 head += f"  n={r.n_components}"
             print(head)
             if r.selection is not None and r.selection.best is not None:
-                res = r.selection.best.result
+                best = r.selection.best
+                res = best.result
                 st = res.stats
                 dw = f"  DW {st.durbin_watson:.2f}" if st.durbin_watson is not None else ""
+                g = best.grade
+                grade = f"  grade {g.letter} ({g.score:.0f})" if g else ""
                 print(
-                    f"      reduced chi-sq {st.redchi:.3g}  AICc {st.aicc:.1f}{dw}  "
-                    f"weighted={st.weighted}  model {r.selection.best.variant}"
+                    f"      reduced chi-sq {st.redchi:.3g}  AICc {st.aicc:.1f}{dw}{grade}  "
+                    f"weighted={st.weighted}  model {best.variant}"
                 )
+                if best.grade and best.grade.reasons:
+                    print("      grade: " + "; ".join(best.grade.reasons))
                 for c in res.components:
                     err = f" ± {c.center_err:.3f}" if c.center_err is not None else ""
                     frac = (
@@ -326,11 +373,93 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_identify(args: argparse.Namespace) -> int:
+    import json
+
+    from .automation.identify import identify_elements, nearest_lines
+
+    elements = [e.strip() for e in args.elements.split(",")] if args.elements else None
+    rc = 0
+    for f in args.files:
+        try:
+            spectra = read_spectra(f, photon_energy=args.photon_energy)
+        except Exception as exc:
+            print(f"{f}: cannot read ({exc})")
+            rc = 1
+            continue
+        for s in spectra:
+            ident = identify_elements(
+                s,
+                tolerance=args.tolerance,
+                min_confidence=args.min_confidence,
+                charge_shift=args.charge_shift,
+                photon_energy=args.photon_energy,
+                elements=elements,
+            )
+            if args.json:
+                print(json.dumps(ident.to_dict(), indent=1))
+                continue
+            print(
+                f"{f} {s.name!r}: {len(ident.peaks)} peaks above {5:g} sigma "
+                f"(noise {ident.noise_sigma:.1f}), tolerance {ident.tolerance_eV:g} eV"
+            )
+            if not ident.candidates:
+                print("  no element identified")
+            for c in ident.candidates:
+                main = c.main_line
+                where = f"{main.peak.energy:7.1f} eV" if main and main.peak else "       -"
+                amb = f"  ambiguous with {', '.join(c.ambiguous_with)}" if c.ambiguous_with else ""
+                print(
+                    f"  {c.element:<3} confidence {c.confidence:4.2f}  "
+                    f"{(main.label if main else ''):<9} {where}  "
+                    f"lines {len(c.matched)}/{len(c.matched) + len(c.missing)}{amb}"
+                )
+                for m in c.matched:
+                    assert m.peak is not None
+                    print(
+                        f"        {m.label:<10} expected {m.expected_eV:7.1f}  found "
+                        f"{m.peak.energy:7.1f}  ({m.offset_eV:+.1f})  height {m.peak.height:9.0f}"
+                    )
+                for m in c.missing:
+                    print(f"        {m.label:<10} expected {m.expected_eV:7.1f}  not found")
+                if c.note:
+                    print(f"        note: {c.note}")
+            if ident.unassigned:
+                print("  unassigned peaks:")
+                for p in ident.unassigned:
+                    hints = ", ".join(nearest_lines(p.energy, ident.photon_energy))
+                    print(f"    {p.energy:7.1f} eV  height {p.height:9.0f}  nearest: {hints}")
+            for n in ident.notes:
+                print(f"  note: {n}")
+    return rc
+
+
+def cmd_update_check(args: argparse.Namespace) -> int:
+    import json
+
+    from .update_check import UpdateCheckError, check_for_update, describe
+
+    try:
+        info = check_for_update(timeout=args.timeout)
+    except UpdateCheckError as exc:
+        print(f"update check failed: {exc}")
+        return 2
+    if args.json:
+        print(json.dumps(info.to_dict(), indent=1))
+    else:
+        print(describe(info))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "info":
         return cmd_info(args)
+    if args.command == "identify":
+        return cmd_identify(args)
+    if args.command == "update-check":
+        return cmd_update_check(args)
     if args.command == "fit":
         return cmd_fit(args, args.files)
     if args.command == "batch":

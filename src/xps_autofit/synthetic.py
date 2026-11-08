@@ -147,6 +147,78 @@ def cu2p3_mixed() -> SynthRegion:
     )
 
 
+def synthesize_survey(
+    composition: dict[str, float],
+    seed: int | None = 0,
+    lo: float = 0.0,
+    hi: float = 1200.0,
+    step: float = 0.5,
+    fwhm_g: float = 1.6,
+    fwhm_l: float = 0.4,
+    scale: float = 20000.0,
+    baseline: float = 400.0,
+    step_fraction: float = 0.15,
+    photon_energy: float = AL_KALPHA_EV,
+    name: str = "survey",
+) -> tuple[Spectrum, dict[str, Any]]:
+    """A survey spectrum of the elements in ``composition`` (symbol -> relative amount).
+
+    Every line of the element in :data:`~xps_autofit.database.survey_lines.SURVEY_LINES`
+    is placed at its typical position (Auger lines converted with ``photon_energy``)
+    with an area proportional to amount x relative intensity x ``scale``.  Each peak
+    adds a Shirley-like step of ``step_fraction`` of its height to the background on
+    the high-binding-energy side; Poisson noise is applied.
+    """
+    from .database.survey_lines import SURVEY_LINES
+
+    x = np.arange(lo, hi + step / 2, step)
+    signal = np.zeros_like(x)
+    placed: list[dict[str, Any]] = []
+    heights = 0.0
+    areas = 0.0
+    for element, amount in composition.items():
+        for line in SURVEY_LINES:
+            if line.element != element:
+                continue
+            e = photon_energy - line.energy if line.kind == "auger" else line.energy
+            if not lo + 3 * fwhm_g < e < hi - 3 * fwhm_g:
+                continue
+            area = scale * amount * line.intensity
+            comp = evaluate("voigt", x, area, e, fwhm_g=fwhm_g, fwhm_l=fwhm_l)
+            signal += comp
+            heights += float(comp.max())
+            areas += area
+            placed.append({"element": element, "line": line.line, "energy": e, "area": area})
+    if areas > 0:
+        kappa = step_fraction * heights / areas
+        bg = baseline + kappa * cumulative_trapezoid(signal, x, initial=0.0)
+    else:
+        bg = np.full_like(x, baseline)
+    bg = bg + 0.05 * baseline * (x - x[0]) / max(x[-1] - x[0], 1e-9)
+    clean = signal + bg
+    rng = np.random.default_rng(seed)
+    y = rng.poisson(np.maximum(clean, 0.0)).astype(float)
+    spec = Spectrum(
+        x,
+        y,
+        name=name,
+        intensity_unit="counts",
+        photon_energy=photon_energy,
+        metadata={"synthetic": True, "survey": True, "composition": dict(composition)},
+    )
+    truth = {
+        "composition": dict(composition),
+        "lines": placed,
+        "fwhm_g": fwhm_g,
+        "fwhm_l": fwhm_l,
+        "baseline": baseline,
+        "step_fraction": step_fraction,
+        "seed": seed,
+        "photon_energy": photon_energy,
+    }
+    return spec, truth
+
+
 def example_dataset(out_dir: str | Path, seed: int = 1) -> list[Path]:
     """Write a small example data set in several file formats and a ``truth.json``."""
     out = Path(out_dir)
@@ -181,6 +253,10 @@ def example_dataset(out_dir: str | Path, seed: int = 1) -> list[Path]:
     save_csv(
         cu, t, "cu2o_Cu2p3.txt", descending=True, sep="\t", header="Binding Energy (eV),Counts"
     )
+    survey, t = synthesize_survey(
+        {"Cu": 1.0, "O": 1.4, "C": 2.5, "N": 0.15}, seed=seed + 4, name="Cu2O/CuO survey"
+    )
+    save_csv(survey, t, "cu2o_survey.csv", descending=True)
     # kinetic-energy export of the fresh S 2p
     ke = AL_KALPHA_EV - s_fresh.energy
     p = out / "p3ht_fresh_S2p_kinetic.csv"

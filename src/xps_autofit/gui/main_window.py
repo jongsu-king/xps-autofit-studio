@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QDateTime, QSettings, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..automation.batch_fitting import RunOptions, run_batch, write_region_outputs
+from ..automation.identify import Identification, identify_elements
 from ..automation.model_selection import select_model
 from ..automation.peak_detection import residual_peak
 from ..core.constraints import check_physical
@@ -35,6 +36,13 @@ from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_resul
 from ..core.uncertainty import BootstrapResult, bootstrap
 from ..readers import supported_extensions
 from ..recipes import builtin_recipe_names, load_recipe
+from ..update_check import (
+    RELEASES_URL,
+    Fetcher,
+    UpdateInfo,
+    check_for_update,
+    disabled_by_environment,
+)
 from .dialogs import BatchDialog, ExportDialog, TableDialog
 from .panels import (
     ComponentsTable,
@@ -50,10 +58,31 @@ from .session import RegionState, Session
 from .workers import JobRunner
 
 MAX_RECENT = 12
+UPDATE_CHECK_INTERVAL_H = 24
+UPDATE_CHECK_DELAY_MS = 1500
+
+
+class UpdateCheckThread(QThread):
+    """Runs the release check off the GUI thread; emits the result or ``None``."""
+
+    done = Signal(object)
+
+    def __init__(self, fetch: Fetcher | None = None, parent: Any = None) -> None:
+        super().__init__(parent)
+        self._fetch = fetch
+
+    def run(self) -> None:
+        try:
+            info: UpdateInfo | None = check_for_update(fetch=self._fetch)
+        except Exception:  # offline, rate limit, odd answer: nothing to show
+            info = None
+        self.done.emit(info)
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, synchronous_jobs: bool = False) -> None:
+    def __init__(
+        self, synchronous_jobs: bool = False, auto_update_check: bool | None = None
+    ) -> None:
         super().__init__()
         self.setWindowTitle(f"XPS AutoFit Studio  {__version__}")
         self.resize(1480, 900)
@@ -62,6 +91,9 @@ class MainWindow(QMainWindow):
         self.runner = JobRunner(self, synchronous=synchronous_jobs)
         self.settings_store = QSettings("xps-autofit", "studio")
         self._current_key: str | None = None
+        self._update_thread: UpdateCheckThread | None = None
+        self.last_update_info: UpdateInfo | None = None
+        self.last_identification: Identification | None = None
 
         # ---- central plot
         self.plot = SpectrumPlot()
@@ -108,8 +140,13 @@ class MainWindow(QMainWindow):
         self.cursor_label = QLabel("")
         self.cursor_label.setObjectName("cursor")
         self.cursor_label.setMinimumWidth(230)
+        self.update_label = QLabel("")
+        self.update_label.setObjectName("update")
+        self.update_label.setOpenExternalLinks(True)
+        self.update_label.setVisible(False)
         self.statusBar().addWidget(self.lamp)
         self.statusBar().addWidget(self.status_text, 1)
+        self.statusBar().addPermanentWidget(self.update_label)
         self.statusBar().addPermanentWidget(self.cursor_label)
         self.statusBar().addPermanentWidget(self.progress)
 
@@ -131,6 +168,10 @@ class MainWindow(QMainWindow):
         self.log(
             f"XPS AutoFit Studio {__version__} ready. Formats: {', '.join(supported_extensions())}"
         )
+        if auto_update_check is None:
+            auto_update_check = not synchronous_jobs
+        if auto_update_check and self.update_check_due():
+            QTimer.singleShot(UPDATE_CHECK_DELAY_MS, lambda: self.check_for_updates(manual=False))
 
     # ------------------------------------------------------------------ layout
     def _dock(
@@ -190,6 +231,12 @@ class MainWindow(QMainWindow):
         self.act_copy_table = QAction("Copy table", self)
         self.act_copy_table.setShortcut("Ctrl+Shift+C")
         self.act_copy_table.triggered.connect(self.copy_current_table)
+        self.act_identify = QAction("IDENTIFY", self)
+        self.act_identify.setShortcut("F8")
+        self.act_identify.setToolTip(
+            "Survey: list the elements whose lines explain the peaks and mark them"
+        )
+        self.act_identify.triggered.connect(lambda: self.identify_current())
         for a in (self.act_open, self.act_open_folder):
             bar.addAction(a)
         bar.addSeparator()
@@ -199,6 +246,7 @@ class MainWindow(QMainWindow):
             self.act_add,
             self.act_remove,
             self.act_uncertainty,
+            self.act_identify,
         ):
             bar.addAction(a)
         bar.addSeparator()
@@ -231,6 +279,7 @@ class MainWindow(QMainWindow):
             self.act_add,
             self.act_remove,
             self.act_uncertainty,
+            self.act_identify,
             self.act_batch,
         ):
             m_an.addAction(a)
@@ -238,6 +287,20 @@ class MainWindow(QMainWindow):
         m_view.addAction(self.act_reset_view)
         m_view.addAction(self.act_copy_table)
         m_help = self.menuBar().addMenu("&Help")
+        self.act_check_updates = QAction("Check for updates…", self)
+        self.act_check_updates.triggered.connect(lambda: self.check_for_updates(manual=True))
+        m_help.addAction(self.act_check_updates)
+        self.act_auto_updates = QAction("Check for updates at startup", self)
+        self.act_auto_updates.setCheckable(True)
+        self.act_auto_updates.setChecked(self.update_check_enabled())
+        self.act_auto_updates.toggled.connect(
+            lambda on: self.settings_store.setValue("update_check/enabled", bool(on))
+        )
+        m_help.addAction(self.act_auto_updates)
+        releases = QAction("Release notes and installers", self)
+        releases.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(RELEASES_URL)))
+        m_help.addAction(releases)
+        m_help.addSeparator()
         about = QAction("About", self)
         about.triggered.connect(
             lambda: QMessageBox.about(
@@ -256,10 +319,140 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         self.plot.shutdown()
+        thread = self._update_thread
+        if thread is not None and thread.isRunning():
+            thread.wait(2000)
         super().closeEvent(event)
 
+    # ------------------------------------------------------------- update check
+    def update_check_enabled(self) -> bool:
+        raw = self.settings_store.value("update_check/enabled", True)
+        if isinstance(raw, str):
+            return raw.lower() not in ("false", "0", "")
+        return bool(raw)
+
+    def update_check_due(self) -> bool:
+        """Startup check wanted, not disabled by the environment, and not done recently."""
+        if disabled_by_environment() or not self.update_check_enabled():
+            return False
+        last = self.settings_store.value("update_check/last", "")
+        if isinstance(last, str) and last:
+            then = QDateTime.fromString(last, Qt.DateFormat.ISODate)
+            if then.isValid():
+                hours = then.secsTo(QDateTime.currentDateTimeUtc()) / 3600.0
+                return hours >= UPDATE_CHECK_INTERVAL_H
+        return True
+
+    def check_for_updates(self, manual: bool = True, fetch: Fetcher | None = None) -> bool:
+        """Ask GitHub for the latest release; the result arrives in ``_update_checked``."""
+        if self.runner.synchronous:
+            try:
+                info: UpdateInfo | None = check_for_update(fetch=fetch)
+            except Exception:
+                info = None
+            self._update_checked(info, manual)
+            return True
+        if self._update_thread is not None and self._update_thread.isRunning():
+            return False
+        thread = UpdateCheckThread(fetch, self)
+        thread.done.connect(lambda info, m=manual: self._update_checked(info, m))
+        thread.finished.connect(self._update_thread_finished)
+        self._update_thread = thread
+        if manual:
+            self.log("checking GitHub for a newer release…")
+        thread.start()
+        return True
+
+    def _update_thread_finished(self) -> None:
+        thread, self._update_thread = self._update_thread, None
+        if thread is not None:
+            thread.deleteLater()
+
+    def _update_checked(self, info: UpdateInfo | None, manual: bool) -> None:
+        self.last_update_info = info
+        if info is None:
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "Check for updates",
+                    "The release information could not be retrieved (offline, or GitHub "
+                    f"did not answer).\n\nReleases: {RELEASES_URL}",
+                )
+            else:
+                self.log("update check: GitHub not reachable; will try again later")
+            return
+        self.settings_store.setValue(
+            "update_check/last", QDateTime.currentDateTimeUtc().toString(Qt.DateFormat.ISODate)
+        )
+        skipped = str(self.settings_store.value("update_check/skip_version", ""))
+        if not info.is_newer:
+            self.update_label.setVisible(False)
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "Check for updates",
+                    f"XPS AutoFit Studio {info.current} is up to date "
+                    f"(latest release {info.latest}).",
+                )
+            else:
+                self.log(f"update check: {info.current} is the latest release")
+            return
+        if not manual and skipped == info.latest:
+            self.log(f"update check: {info.latest} available (skipped by you)")
+            return
+        self.show_update(info)
+        if manual:
+            self._update_dialog(info)
+
+    def show_update(self, info: UpdateInfo) -> None:
+        """Put a clickable notice in the status bar and a line in the log."""
+        asset = info.platform_asset
+        url = asset[1] if asset else info.url
+        self.update_label.setText(
+            f'<a href="{url}" style="color:#e0b35a;text-decoration:none">'
+            f"↑ Update {info.latest} available</a>"
+        )
+        self.update_label.setToolTip(
+            f"You have {info.current}. Click to open " + (asset[0] if asset else "the release page")
+        )
+        self.update_label.setVisible(True)
+        self.log(f"update available: {info.latest} (installed {info.current}) - {info.url}")
+
+    def _update_dialog(self, info: UpdateInfo) -> None:
+        asset = info.platform_asset
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Update available")
+        box.setText(f"XPS AutoFit Studio {info.latest} is available (you have {info.current}).")
+        detail = f"Release page: {info.url}"
+        if asset:
+            detail += f"\nInstaller for this computer: {asset[0]}"
+        else:
+            detail += '\nUpgrade with: pip install -U "xps-autofit[gui]"'
+        if info.notes:
+            detail += "\n\n" + info.notes[:1500]
+        box.setDetailedText(detail)
+        download = box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+        skip = box.addButton("Skip this version", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is download:
+            QDesktopServices.openUrl(QUrl(asset[1] if asset else info.url))
+        elif clicked is skip:
+            self.settings_store.setValue("update_check/skip_version", info.latest)
+            self.update_label.setVisible(False)
+            self.log(f"update check: {info.latest} will not be announced again")
+
     def _job_actions(self) -> tuple[QAction, ...]:
-        return (self.act_fit, self.act_refit, self.act_batch, self.act_export, self.act_uncertainty)
+        return (
+            self.act_fit,
+            self.act_refit,
+            self.act_batch,
+            self.act_export,
+            self.act_uncertainty,
+            self.act_identify,
+        )
 
     def _job_started(self, label: str) -> None:
         self.progress.setVisible(True)
@@ -615,6 +808,50 @@ class MainWindow(QMainWindow):
         self.components.show_result(cand.result)
         status = "ok" if cand.physical_ok else "needs_review"
         self.diagnostics.display(cand.result, state.selection, status)
+
+    # ------------------------------------------------------------- identification
+    def identify_current(self, tolerance: float = 1.5, min_confidence: float = 0.3) -> bool:
+        """Identify the elements in the selected spectrum (meant for surveys)."""
+        cur = self.current()
+        if cur is None:
+            self.log("select a survey spectrum first")
+            return False
+        key, item = cur
+        spectrum = item.spectrum
+        lo, hi = spectrum.range
+        if hi - lo < 100:
+            self.log(
+                f"{item.display_name}: {hi - lo:.0f} eV wide; identification is meant for "
+                "surveys but runs anyway"
+            )
+
+        def job() -> Identification:
+            return identify_elements(spectrum, tolerance=tolerance, min_confidence=min_confidence)
+
+        def done(ident: Identification) -> None:
+            self.last_identification = ident
+            found = ", ".join(f"{c.element} ({c.confidence:.2f})" for c in ident.candidates)
+            self.log(
+                f"{item.display_name}: {len(ident.peaks)} peaks; elements: "
+                + (found or "none above the confidence threshold")
+            )
+            for n in ident.notes:
+                self.log(f"  {n}")
+            marks: list[tuple[str, float]] = []
+            for c in ident.candidates:
+                for m in c.matched:
+                    if m.peak is not None and m.line.kind == "photoelectron":
+                        marks.append((m.label, m.peak.energy))
+            if key == self._current_key:
+                self.plot.show_spectrum(spectrum, f"{item.display_name} - identified elements")
+                self.plot.mark_lines(marks[:24])
+            self.lamp.set_state("ok", "IDENTIFIED")
+            if not self.runner.synchronous:
+                TableDialog(
+                    f"Elements in {item.display_name}", pd.DataFrame(ident.rows()), None, self
+                ).exec()
+
+        return self.runner.start(job, done, self._error, label="identify elements")
 
     # ------------------------------------------------------------- uncertainty
     def run_uncertainty(self, n: int | None = None) -> bool:

@@ -3,7 +3,7 @@ message: "If you use this software, please cite it as below."
 title: "XPS AutoFit Studio"
 abstract: "Automated, reproducible XPS peak fitting with physical constraints, statistical model selection and batch processing."
 type: software
-version: 0.3.0
+version: 0.4.0
 date-released: 2026-11-08
 license: MIT
 repository-code: "https://github.com/jongsu-king/xps-autofit-studio"

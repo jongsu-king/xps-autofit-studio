@@ -41,6 +41,24 @@ class FitError(RuntimeError):
     """Raised when a fit cannot be set up or the optimiser fails outright."""
 
 
+LOSSES = ("linear", "soft_l1", "huber", "cauchy", "arctan")
+"""Loss functions of :func:`scipy.optimize.least_squares`.  ``linear`` is ordinary
+least squares; the others down-weight residuals larger than ``loss_scale`` so that
+spikes, cosmic-ray hits and misfit tails pull less on the components."""
+
+CORRELATION_REPORT = 0.9
+"""Pairs of free parameters whose correlation coefficient exceeds this value are
+listed in :attr:`FitResult.correlations`."""
+
+MAX_MASKED_FRACTION = 0.02
+"""Spike masking is skipped (with a warning) when more points than this fraction of
+the region would be masked: that is not a few spikes but a different problem."""
+
+MAX_SPIKE_STEP = 0.25
+"""Spike masking needs a step fine enough that a real line spans several points; it
+is skipped (with a warning) above this step in eV."""
+
+
 # ----------------------------------------------------------------------------- specs
 @dataclass
 class ComponentSpec:
@@ -118,6 +136,17 @@ class FitSettings:
     global_popsize: int = 12
     seed: int | None = None
     """Seed of the differential-evolution search (``None``: 0, deterministic)."""
+    loss: str = "linear"
+    """``"linear"`` (least squares) or a robust loss of :data:`LOSSES`
+    (``soft_l1``, ``huber``, ``cauchy``, ``arctan``), applied with
+    :func:`scipy.optimize.least_squares`."""
+    loss_scale: float = 3.0
+    """Residual size (in standard deviations for weighted fits, in robust noise
+    units otherwise) beyond which a robust loss starts to down-weight a point."""
+    spike_sigma: float | None = None
+    """When set, points deviating from a 5-point running median by more than this
+    many local standard deviations are excluded from the fit (cosmic-ray hits,
+    detector spikes).  ``None`` disables the mask."""
 
     def __post_init__(self) -> None:
         get_shape(self.shape)
@@ -125,6 +154,12 @@ class FitSettings:
             raise ValueError("weighting must be 'auto', 'poisson' or 'none'")
         if self.optimizer not in ("leastsq", "global"):
             raise ValueError("optimizer must be 'leastsq' or 'global'")
+        if self.loss not in LOSSES:
+            raise ValueError(f"loss must be one of {LOSSES}")
+        if self.loss_scale <= 0:
+            raise ValueError("loss_scale must be positive")
+        if self.spike_sigma is not None and self.spike_sigma <= 0:
+            raise ValueError("spike_sigma must be positive or None")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -140,10 +175,14 @@ class FitSettings:
             "global_max_nfev": self.global_max_nfev,
             "global_popsize": self.global_popsize,
             "seed": self.seed,
+            "loss": self.loss,
+            "loss_scale": self.loss_scale,
+            "spike_sigma": self.spike_sigma,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FitSettings:
+        spike = d.get("spike_sigma")
         return cls(
             shape=str(d.get("shape", "voigt")),
             background=BackgroundSpec.from_dict(d.get("background")),
@@ -157,6 +196,9 @@ class FitSettings:
             global_max_nfev=int(d.get("global_max_nfev", 20000)),
             global_popsize=int(d.get("global_popsize", 12)),
             seed=d.get("seed"),
+            loss=str(d.get("loss", "linear")),
+            loss_scale=float(d.get("loss_scale", 3.0)),
+            spike_sigma=float(spike) if spike is not None else None,
         )
 
 
@@ -217,6 +259,14 @@ class FitStatistics:
     """Wald-Wolfowitz runs test of the residual signs; strongly negative values mean
     long runs of one sign, i.e. systematic misfit."""
     lag1_autocorr: float | None = None
+    n_masked: int = 0
+    """Points excluded from the fit by the spike mask."""
+    max_correlation: float | None = None
+    """Largest absolute correlation coefficient between free parameters of *different*
+    components (or a component and the background).  Values near 1 mean the data do
+    not determine those parameters separately."""
+    max_correlation_pair: str | None = None
+    loss: str = "linear"
 
     def to_dict(self) -> dict[str, Any]:
         return {k: _clean(v) for k, v in self.__dict__.items()}
@@ -246,6 +296,11 @@ class FitResult:
     settings: FitSettings
     specs: list[ComponentSpec]
     warnings: list[str] = field(default_factory=list)
+    mask: np.ndarray | None = field(default=None, repr=False)
+    """Boolean array, ``True`` where a point was excluded from the fit (spike mask)."""
+    correlations: list[dict[str, Any]] = field(default_factory=list)
+    """Parameter pairs with ``|r| >= CORRELATION_REPORT``: ``{"a", "b", "r",
+    "same_component"}``, strongest first."""
 
     @property
     def background_total(self) -> np.ndarray:
@@ -282,10 +337,13 @@ class FitResult:
             "components": [c.to_dict() for c in self.components],
             "stats": self.stats.to_dict(),
             "warnings": list(self.warnings),
+            "correlations": [dict(c) for c in self.correlations],
         }
         if include_arrays:
             d["x"] = self.x.tolist()
             d["y"] = self.y.tolist()
+            if self.mask is not None:
+                d["mask"] = self.mask.astype(int).tolist()
             d["y_net"] = self.y_net.tolist()
             d["bg_adjust"] = self.bg_adjust.tolist()
             d["envelope"] = self.envelope.tolist()
@@ -510,9 +568,51 @@ def _residual(
     ctx: ModelContext,
     target: np.ndarray,
     w: np.ndarray | None,
+    keep: np.ndarray | None = None,
 ) -> np.ndarray:
     r = ctx.total(params.valuesdict()) - target
-    return r * w if w is not None else r
+    if w is not None:
+        r = r * w
+    return r[keep] if keep is not None else r
+
+
+def detect_spikes(
+    y: np.ndarray, sigma: np.ndarray | None = None, threshold: float = 6.0
+) -> np.ndarray:
+    """Boolean mask of isolated outliers one or two points wide.
+
+    A point is a spike when it lies more than ``threshold`` local standard deviations
+    *above both* of its neighbours (or below both: a dropout); two adjacent points
+    are a spike when both exceed the points on either side of the pair by that
+    margin.  A smooth slope or a peak several points wide never satisfies this,
+    whereas a cosmic-ray hit or a detector glitch does.  ``sigma`` gives the local
+    standard deviation (counting statistics); without it the robust scale of the
+    first differences is used.
+    """
+    y = np.asarray(y, dtype=float)
+    n = y.size
+    mask = np.zeros(n, dtype=bool)
+    if n < 7:
+        return mask
+    if sigma is not None:
+        local = np.maximum(np.asarray(sigma, dtype=float), 1e-12)
+    else:
+        d = np.diff(y)
+        mad = float(np.median(np.abs(d - np.median(d))))
+        local = np.full(n, max(1.4826 * mad / np.sqrt(2.0), 1e-12))
+    t = threshold * local
+    c = y[1:-1]
+    left, right = y[:-2], y[2:]
+    single = (c - np.maximum(left, right) > t[1:-1]) | (np.minimum(left, right) - c > t[1:-1])
+    mask[1:-1] |= single
+    a, b = y[1:-2], y[2:-1]
+    outer_lo, outer_hi = y[:-3], y[3:]
+    pair_hi = np.minimum(a, b) - np.maximum(outer_lo, outer_hi) > np.maximum(t[1:-2], t[2:-1])
+    pair_lo = np.minimum(outer_lo, outer_hi) - np.maximum(a, b) > np.maximum(t[1:-2], t[2:-1])
+    pair = pair_hi | pair_lo
+    mask[1:-2] |= pair
+    mask[2:-1] |= pair
+    return mask
 
 
 # ---------------------------------------------------------------------------- fitting
@@ -547,25 +647,73 @@ def fit_peaks(
     w = (1.0 / sigma) if sigma is not None else None
     scale_covar = settings.scale_covar if settings.scale_covar is not None else (w is None)
 
+    extra_warnings: list[str] = []
+    mask: np.ndarray | None = None
+    keep: np.ndarray | None = None
+    if settings.spike_sigma is not None and spectrum.step > MAX_SPIKE_STEP:
+        extra_warnings.append(
+            f"spike mask skipped: step {spectrum.step:.2f} eV is too coarse to tell a spike "
+            f"from a narrow line (limit {MAX_SPIKE_STEP:g} eV)"
+        )
+    elif settings.spike_sigma is not None:
+        mask = detect_spikes(y, spectrum.sigma, settings.spike_sigma)
+        n_mask = int(mask.sum())
+        if n_mask > MAX_MASKED_FRACTION * y.size:
+            extra_warnings.append(
+                f"spike mask skipped: {n_mask} of {y.size} points exceed "
+                f"{settings.spike_sigma:g} sigma; that is not a few spikes"
+            )
+            mask = None
+        elif n_mask:
+            keep = ~mask
+            where = ", ".join(f"{float(e):.2f}" for e in x[mask][:6])
+            extra_warnings.append(f"{n_mask} spike(s) masked at {where} eV")
+        else:
+            mask = None
+
     params = build_parameters(specs, settings, x, y, background)
     ctx = ModelContext.create(x, specs, settings)
     target = y if active else y_net
-    args = (ctx, target, w)
+    args = (ctx, target, w, keep)
     try:
         if settings.optimizer == "global":
             params = _global_search(params, args, settings, ctx, target)
-        res = lmfit.minimize(
-            _residual,
-            params,
-            args=args,
-            method=settings.method,
-            max_nfev=settings.max_nfev,
-            scale_covar=scale_covar,
-            nan_policy="raise",
-        )
+        if settings.loss == "linear":
+            res = lmfit.minimize(
+                _residual,
+                params,
+                args=args,
+                method=settings.method,
+                max_nfev=settings.max_nfev,
+                scale_covar=scale_covar,
+                nan_policy="raise",
+            )
+        else:
+            f_scale = settings.loss_scale
+            if w is None:
+                r0 = _residual(params, *args)
+                mad = float(np.median(np.abs(r0 - np.median(r0))))
+                f_scale *= max(1.4826 * mad, 1e-9 * float(np.max(np.abs(target)) or 1.0))
+            res = lmfit.minimize(
+                _residual,
+                params,
+                args=args,
+                method="least_squares",
+                max_nfev=settings.max_nfev,
+                scale_covar=scale_covar,
+                nan_policy="raise",
+                loss=settings.loss,
+                f_scale=f_scale,
+            )
+            extra_warnings.append(
+                f"robust loss {settings.loss} (scale {f_scale:.3g}): standard errors are "
+                "the linearised estimate; compare with a bootstrap"
+            )
     except Exception as exc:  # lmfit raises a variety of exception types
         raise FitError(f"optimiser failed: {exc}") from exc
-    return _build_result(res, spectrum, specs, settings, background, ctx, sigma, w)
+    result = _build_result(res, spectrum, specs, settings, background, ctx, sigma, w, mask)
+    result.warnings[0:0] = extra_warnings
+    return result
 
 
 def _global_search(
@@ -621,6 +769,46 @@ def _global_search(
             lo, hi = out[name].min, out[name].max
             out[name].value = float(np.clip(par.value, lo, hi))
     return out
+
+
+def _component_of(name: str) -> str:
+    """``c0_area`` -> ``c0``; ``bg_offset`` -> ``bg``; shared widths count as background."""
+    return name.split("_", 1)[0]
+
+
+def parameter_correlations(res: Any) -> tuple[list[dict[str, Any]], float | None, str | None]:
+    """Strongly correlated free-parameter pairs from the covariance matrix.
+
+    Returns ``(pairs, max_cross, pair_label)`` where ``pairs`` lists every pair with
+    ``|r| >= CORRELATION_REPORT`` (strongest first) and ``max_cross`` is the largest
+    ``|r|`` between parameters of *different* components (a width shared across
+    components is attributed to the first one).  Correlations inside one component
+    (its own area and width, say) are expected and not counted in ``max_cross``.
+    """
+    covar = getattr(res, "covar", None)
+    names = list(getattr(res, "var_names", []) or [])
+    if covar is None or len(names) < 2:
+        return [], None, None
+    covar = np.asarray(covar, dtype=float)
+    d = np.sqrt(np.clip(np.diag(covar), 0.0, None))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        corr = covar / np.outer(d, d)
+    pairs: list[dict[str, Any]] = []
+    max_cross = 0.0
+    label: str | None = None
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            r = float(corr[i, j])
+            if not np.isfinite(r):
+                continue
+            same = _component_of(names[i]) == _component_of(names[j])
+            if not same and abs(r) > max_cross:
+                max_cross = abs(r)
+                label = f"{names[i]} ~ {names[j]}"
+            if abs(r) >= CORRELATION_REPORT:
+                pairs.append({"a": names[i], "b": names[j], "r": r, "same_component": same})
+    pairs.sort(key=lambda p: -abs(p["r"]))
+    return pairs, (max_cross if label is not None else None), label
 
 
 def _stderr(par: lmfit.Parameter) -> float | None:
@@ -680,6 +868,7 @@ def _build_result(
     ctx: ModelContext,
     sigma: np.ndarray | None,
     w: np.ndarray | None,
+    mask: np.ndarray | None = None,
 ) -> FitResult:
     x = spectrum.energy
     y = spectrum.intensity
@@ -760,20 +949,25 @@ def _build_result(
             parent_area = sum(d.area for d in components if d.parent == c.parent)
             c.component_fraction = 100.0 * parent_area / total
 
-    n = int(x.size)
+    keep = ~mask if mask is not None else np.ones(x.size, dtype=bool)
+    n = int(keep.sum())
     k = int(res.nvarys)
-    rss = float(np.sum(residual**2))
+    used = residual[keep]
+    rss = float(np.sum(used**2))
     weighted = w is not None
-    if weighted:
-        chisqr = float(np.sum((residual * w) ** 2))
+    if w is not None:
+        scaled = used * w[keep]
+        chisqr = float(np.sum(scaled**2))
         loglike_term = chisqr
     else:
+        scaled = used
         chisqr = rss
         loglike_term = n * math.log(max(rss, 1e-300) / n)
     aic = loglike_term + 2 * k
     aicc = aic + (2 * k * (k + 1) / (n - k - 1)) if n - k - 1 > 0 else float("inf")
     bic = loglike_term + k * math.log(n)
-    dw, runs_z, lag1 = residual_diagnostics(residual * w if w is not None else residual)
+    dw, runs_z, lag1 = residual_diagnostics(scaled)
+    correlations, max_corr, corr_pair = parameter_correlations(res)
     stats = FitStatistics(
         ndata=n,
         nvarys=k,
@@ -792,6 +986,10 @@ def _build_result(
         durbin_watson=dw,
         runs_z=runs_z,
         lag1_autocorr=lag1,
+        n_masked=int(x.size - n),
+        max_correlation=max_corr,
+        max_correlation_pair=corr_pair,
+        loss=settings.loss,
     )
     if not res.success:
         warnings.append(f"optimiser reported failure: {res.message}")
@@ -830,6 +1028,8 @@ def _build_result(
         settings=settings,
         specs=specs,
         warnings=warnings,
+        mask=mask,
+        correlations=correlations,
     )
 
 

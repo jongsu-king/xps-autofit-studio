@@ -197,6 +197,10 @@ QLabel#cursor {{
     padding: 0 8px;
 }}
 QLabel#caption {{ color: {MUTED}; font-size: 11px; }}
+QLabel#update {{
+    padding: 0 10px;
+    font-weight: 600;
+}}
 QMenuBar {{ background: {PANEL}; border-bottom: 1px solid {BORDER}; }}
 QMenuBar::item:selected {{ background: {ACCENT_DIM}; }}
 QMenu {{ background: {PANEL}; border: 1px solid {BORDER}; }}

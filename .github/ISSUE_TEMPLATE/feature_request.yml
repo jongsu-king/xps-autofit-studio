@@ -1,0 +1,22 @@
+name: Feature request
+description: A line shape, a background, a file format, a reference value or an app feature you need
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you want to do
+      description: The analysis task, not the implementation. Which element / line / sample?
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How you do it today
+      description: Other software, a manual procedure, a script.
+  - type: textarea
+    id: refs
+    attributes:
+      label: References
+      description: Papers or handbooks for line positions, sensitivity factors or line shapes you want added (the database only takes sourced values).

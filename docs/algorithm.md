@@ -135,6 +135,8 @@ the symmetric case and raises no warning. The asymmetric shape is not part of
 | `unassigned` | centre outside every candidate window | warning, or violation with `require_assignment` |
 | `width_at_lower_bound` / `width_at_upper_bound` | width within 1 % of its bound | warning |
 | `structured_residual` | Durbin-Watson statistic of the residual below `residual_dw_warning` (1.0) with at least 30 points | warning |
+| `degenerate_parameters` | correlation between parameters of different components above `correlation_warning` (0.98) | warning |
+| `large_relative_error` | area standard error above `relative_error_warning` (50 %) of the area | warning |
 
 Standard errors are taken from the covariance matrix (rescaled by reduced
 chi-square only for unweighted fits). A parameter resting on a bound gets a
@@ -151,6 +153,40 @@ appear in the statistics (`durbin_watson`, `runs_z`, `lag1_autocorr`), the
 candidate table, the desktop Diagnostics tab and the summary tables. A missing
 component or a wrong background shows up here even when chi-square looks
 acceptable.
+
+### Parameter correlations
+
+From the covariance matrix every fit derives the correlation coefficients of the
+free parameters. Pairs with |r| >= 0.9 are listed (`FitResult.correlations`, with a
+flag saying whether both belong to the same component), and the largest |r|
+between parameters of *different* components - or a component and the background -
+is reported as `max_correlation` with the pair's names. Correlations inside one
+component (its own area and width) are expected and not counted. A value above
+`correlation_warning` (0.98) raises `degenerate_parameters`: the two components
+are not determined independently by these data, however small their individual
+standard errors look, and the split between them should not be reported without
+a constraint (a fixed splitting, a shared width, a candidate window) or more data.
+
+### Quality grade
+
+Every candidate model receives a grade A-E (`xps_autofit.core.quality.grade_fit`)
+so that a batch of fifty results can be triaged. It starts at 100 points and loses:
+
+| Category | Rule | Max loss |
+|---|---|---|
+| goodness of fit | weighted fits: 30 x \|log10(reduced chi-square)\| | 30 |
+| residual structure | Durbin-Watson < 1.0: 25; < 1.5: 10 | 25 |
+| physical checks | each violation 25 | 50 |
+| warnings | each warning 5 (residual, degeneracy and error warnings counted elsewhere) | 20 |
+| parameter errors | no covariance 15; each area uncertain by > 50 %: 10 | 25 |
+| degeneracy | `max_correlation` > 0.98: 10; > 0.995: 20 | 20 |
+| convergence | optimiser failure | 20 |
+
+A >= 90 (report as is), B >= 75 (read the warnings), C >= 60 (check the flagged
+components), D >= 40 (inspect residual and model table), E (do not report without
+manual work). Every deduction is listed with its number, so the letter can always be
+traced back. The grade is a summary for triage, not a statistical test, and it does
+not enter the model choice.
 
 ## 6. Choice
 
@@ -192,8 +228,82 @@ includes the peak-fitting trade-offs, not only counting statistics.
 
 ## 9. Reproducibility
 
-The project JSON stores the fitted data, settings (including the background mode
-and the line shape), the start that won, all parameters with bounds and
-expressions, the statistics, every candidate, and the versions of Python, NumPy,
-SciPy, lmfit and this package. `xps-autofit verify` reloads it, re-runs the fit
-from the stored start and compares parameters and envelope to 1e-6 relative.
+The project JSON stores the fitted data, settings (including the background mode,
+the line shape, the loss and the spike mask), the start that won, all parameters
+with bounds and expressions, the statistics, every candidate, and the versions of
+Python, NumPy, SciPy, lmfit and this package. `xps-autofit verify` reloads it,
+re-runs the fit from the stored start and compares parameters and envelope to 1e-6
+relative.
+
+## 10. Outliers: robust loss and spike mask
+
+Least squares gives every point the same say, so a cosmic-ray hit, a detector
+glitch or a tail the model cannot describe pulls the components towards it. Two
+remedies are available per region; both are off by default and recorded in the
+project file.
+
+**Robust loss** (`loss: soft_l1 | huber | cauchy | arctan`, `--loss`, GUI
+*Robustness*). The fit runs through `scipy.optimize.least_squares` with the chosen
+loss ρ applied to the weighted residual `r/σ`: the cost is `Σ ρ((r/σ)²; s)` with the
+scale `s = loss_scale` (default 3). Residuals below `s` behave as in least squares,
+larger ones grow linearly (`soft_l1`, `huber`), logarithmically (`cauchy`) or are
+bounded (`arctan`), so a point ten sigma off contributes little more than one three
+sigma off. For unweighted fits the scale is `loss_scale` times the robust standard
+deviation (1.4826 x MAD) of the starting residual. Standard errors are the
+linearised estimate from the Jacobian at the solution; the result carries a
+warning saying so, and a bootstrap is the honest check. On a synthetic oxidised S
+2p region with four injected spikes the robust fit keeps both doublets within 3 %
+of the truth while ordinary least squares adds a spurious third component to
+absorb the spikes.
+
+**Spike mask** (`spike_sigma`, `--mask-spikes SIGMA`, GUI *Mask spikes*). A point
+is a spike when it lies more than `SIGMA` local standard deviations (counting
+statistics when available) *above both of its neighbours* - or below both, for a
+dropout; two adjacent points are a spike when both exceed the points on either side
+of the pair. A smooth flank or a peak several points wide never satisfies this,
+which is why the mask is refused (with a warning) when the step exceeds 0.25 eV:
+at a coarse step a genuine narrow line could be two points wide. Masked points are
+excluded from the fit, replaced by the running median for the background and the
+peak detection, listed in the warnings with their energies, and left out of every
+statistic (`n_masked`, `ndata`). More than 2 % masked points is not a few spikes
+but a different problem, and the mask is skipped with a warning. Edge points cannot
+be tested and are never masked.
+
+## 11. Survey element identification
+
+`xps-autofit identify` and the IDENTIFY button answer the first question about a
+new sample - *what is in it?* - from a survey scan, before any region is fitted.
+
+1. **Peaks.** The survey is put on a uniform grid, smoothed with a Savitzky-Golay
+   window of about 1 eV, and maxima are located with a prominence floor of 5 x the
+   noise (window-limited to 30 eV so a step background does not swallow small
+   lines). Each maximum must also rise 5 x its own Poisson noise above the local
+   baseline.
+2. **Table.** `xps_autofit.database.survey_lines` lists, for 62 elements, the
+   principal photoelectron lines (typical binding energy, Scofield-like relative
+   intensity with C 1s = 1) and the common Auger lines by kinetic energy, which are
+   placed with the spectrum's photon energy. Positions are typical values; chemical
+   states and charging move them by about 1 eV, so matching uses a tolerance
+   (default 1.5 eV, `--tolerance`) and an optional `--charge-shift`.
+3. **Score.** For each element the lines inside the measured range are matched to
+   the nearest peak within the tolerance. The element is a candidate only when its
+   **strongest line in range** is found; its confidence is the matched share of the
+   expected intensity, reduced when only secondary lines can be seen because the
+   main line lies outside the range (`sqrt(strongest in range / strongest
+   overall)`), and reduced when a secondary line is far stronger than the main line
+   allows (that peak is something else).
+4. **Shared peaks.** Candidates are walked from the most to the least confident. One
+   whose main line sits on a peak already explained by a stronger candidate is
+   *ambiguous* (half confidence, the alternative named: Bi 4f / S 2p, Au 4d / Pd
+   3d, Ru 3d / C 1s); if every one of its peaks is already explained it is most
+   likely a coincidence (quarter confidence) and usually falls below the threshold
+   (default 0.3, `--min-confidence`).
+5. **Report.** Candidates with their matched and missing lines, offsets and
+   heights; peaks that no element explains, with the nearest table lines as hints;
+   the parameters used. The app marks the matched lines on the spectrum.
+
+On synthetic surveys of seven compositions (Cu/O/C/N, Si/O/C/F/Na, Ti/O/C/Au,
+Pb/I/C/N/O, Bi/S/C/O, Mg/O/C, Fe/Ni/Cr/O/C) every element present is found and no
+absent element is reported; the Bi/S overlap is reported as ambiguous. Real surveys
+add satellites, plasmons and charging, so the result is a shortlist to confirm with
+high-resolution regions, never an assignment.

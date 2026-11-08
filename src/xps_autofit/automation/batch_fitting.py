@@ -414,10 +414,15 @@ def write_summary(batch: BatchReport, options: RunOptions) -> dict[str, str]:
                 "charge_shift_eV": f.charge_shift_eV,
             }
             if r.selection is not None and r.selection.best is not None:
-                s = r.selection.best.result.stats
+                best = r.selection.best
+                s = best.result.stats
                 row.update(redchi=s.redchi, aicc=s.aicc, bic=s.bic, weighted=s.weighted)
                 row["durbin_watson"] = s.durbin_watson
-                row["background"] = r.selection.best.variant
+                row["max_correlation"] = s.max_correlation
+                row["n_masked"] = s.n_masked
+                row["grade"] = best.grade.letter if best.grade else None
+                row["quality_score"] = best.grade.score if best.grade else None
+                row["background"] = best.variant
                 row["violations"] = "; ".join(v.message for v in r.selection.best.violations)
                 row["warnings"] = "; ".join(v.message for v in r.selection.best.warnings)
             if r.auger:

@@ -116,6 +116,13 @@ class RegionSpec:
     optimizer: str = "leastsq"
     """``"leastsq"`` (multi-start Levenberg-Marquardt) or ``"global"`` (differential
     evolution inside the bounds, then Levenberg-Marquardt)."""
+    loss: str = "linear"
+    """Least-squares loss: ``linear`` or a robust loss (``soft_l1``, ``huber``,
+    ``cauchy``, ``arctan``) that down-weights residuals beyond ``loss_scale``."""
+    loss_scale: float = 3.0
+    spike_sigma: float | None = None
+    """Exclude isolated points deviating from the running median by more than this
+    many local standard deviations (``None``: no spike mask)."""
     require_assignment: bool = False
     fit: bool = True
     """``False`` for report-only regions (e.g. an Auger line whose maximum is used for
@@ -144,6 +151,10 @@ class RegionSpec:
             raise ValueError(f"background mode must be 'auto' or one of {BACKGROUND_MODES}")
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"optimizer must be one of {OPTIMIZERS}")
+        from .fitting import LOSSES
+
+        if self.loss not in LOSSES:
+            raise ValueError(f"loss must be one of {LOSSES}")
 
     @property
     def candidate_windows(self) -> list[tuple[str, float, float]]:
@@ -193,6 +204,9 @@ class RegionSpec:
             weighting=self.weighting,
             refine_linear_background=self.refine_background,
             optimizer=self.optimizer,
+            loss=self.loss,
+            loss_scale=self.loss_scale,
+            spike_sigma=self.spike_sigma,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -216,6 +230,9 @@ class RegionSpec:
             "criterion": self.criterion,
             "min_improvement": self.min_improvement,
             "optimizer": self.optimizer,
+            "loss": self.loss,
+            "loss_scale": self.loss_scale,
+            "spike_sigma": self.spike_sigma,
             "require_assignment": self.require_assignment,
             "fit": self.fit,
             "report": self.report,
@@ -262,6 +279,11 @@ class RegionSpec:
             criterion=str(d.get("criterion", "aicc")),
             min_improvement=float(d.get("min_improvement", 2.0)),
             optimizer=str(d.get("optimizer", "leastsq")),
+            loss=str(d.get("loss", "linear")),
+            loss_scale=float(d.get("loss_scale", 3.0)),
+            spike_sigma=(
+                float(d["spike_sigma"]) if d.get("spike_sigma") not in (None, False) else None
+            ),
             require_assignment=bool(d.get("require_assignment", False)),
             fit=bool(d.get("fit", True)),
             report=d.get("report"),
