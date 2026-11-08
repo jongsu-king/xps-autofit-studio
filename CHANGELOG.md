@@ -60,7 +60,10 @@ correction.
 - *Scatter window* control in the BACKGROUND group (enabled for active/auto).
 
 ### Changed
-- Tests: 192 (21 new: engine 7, line shapes 8, desktop 6).
+- Tests: 192 (21 new: engine 7, line shapes 8, desktop 6). The test process now
+  ends without the interpreter's finalisation when Qt was used: PySide6 objects
+  collected at shutdown had aborted green CI runs on Linux / Python 3.11 (exit
+  134, `bool_dealloc`); the summary, coverage and exit status are unaffected.
 
 ## [0.4.1] - 2026-11-08
 
