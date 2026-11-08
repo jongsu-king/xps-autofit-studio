@@ -121,7 +121,13 @@ jobs:
           DMG=$(ls installers/*.dmg)
           MNT=$(hdiutil attach "$DMG" -nobrowse -readonly | awk -F'\t' '/\/Volumes\//{print $NF}')
           "$MNT/XPS AutoFit Studio.app/Contents/MacOS/xps-autofit" --version
-          hdiutil detach "$MNT" -quiet
+          # The volume is briefly busy after the process exits ("Resource busy", exit 16);
+          # the test has already passed at this point, so retry the detach and never fail on it.
+          for i in 1 2 3 4 5 6; do
+            if hdiutil detach "$MNT" -quiet; then break; fi
+            sleep 5
+            [ "$i" = 6 ] && hdiutil detach "$MNT" -force -quiet || true
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ runner.os }}
