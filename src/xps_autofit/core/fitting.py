@@ -460,7 +460,18 @@ def build_parameters(
             raise FitError("an active background needs the data to initialise")
         offset, scatter = _active_start(x, y, background)
         params.add("bg_offset", value=offset)
-        params.add("bg_scatter", value=scatter, min=0.0)
+        window = settings.background.scatter_window
+        if window is not None and scatter > 0:
+            # Keep k near the endpoint-based estimate: without a window a weak edge
+            # component and the scattering factor can compensate each other.
+            params.add(
+                "bg_scatter",
+                value=scatter,
+                min=scatter / (1.0 + window),
+                max=scatter * (1.0 + window),
+            )
+        else:
+            params.add("bg_scatter", value=scatter, min=0.0)
         if settings.refine_linear_background:
             params.add("bg_slope", value=0.0)
     elif settings.refine_linear_background:
@@ -745,7 +756,7 @@ def _global_search(
             par.set(min=par.value - peak, max=par.value + peak)
         elif name == "bg_slope":
             par.set(min=-peak / span, max=peak / span)
-        elif name == "bg_scatter":
+        elif name == "bg_scatter" and not np.isfinite(par.max):
             hi = max(3.0 * peak / s_max if s_max > 0 else 0.0, 10.0 * par.value, 1e-6)
             par.set(min=0.0, max=hi)
         if not (np.isfinite(par.min) and np.isfinite(par.max)):
@@ -883,12 +894,23 @@ def _build_result(
     warnings: list[str] = list(background.warnings)
     if ctx.active is not None:
         bg_values = ctx.active_background(values, envelope)
+        k = res.params["bg_scatter"]
         info = {
             **background.info,
             "mode": "active",
             "offset": float(values["bg_offset"]),
             "scatter": float(values["bg_scatter"]),
+            "scatter_start": float(k.init_value if k.init_value is not None else k.value),
+            "scatter_window": settings.background.scatter_window,
         }
+        if settings.background.scatter_window is not None and np.isfinite(k.max) and k.vary:
+            at_bound = k.value <= k.min * 1.001 or k.value >= k.max * 0.999
+            if at_bound:
+                warnings.append(
+                    f"active background: scattering factor k = {k.value:.4g} sits at the edge "
+                    f"of its window [{k.min:.4g}, {k.max:.4g}] around the static estimate; "
+                    "widen scatter_window (or set it to null) if the endpoints are unreliable"
+                )
         background = BackgroundResult(bg_values, settings.background, info, list(warnings))
     y_net = y - background.values
     residual = y_net - bg_adjust - envelope

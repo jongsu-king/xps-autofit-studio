@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 from PySide6.QtCore import QDateTime, QSettings, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -33,6 +33,7 @@ from ..automation.model_selection import select_model
 from ..automation.peak_detection import residual_peak
 from ..core.constraints import check_physical
 from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_result
+from ..core.preprocessing import C1S_REFERENCE_WARNING
 from ..core.uncertainty import BootstrapResult, bootstrap
 from ..readers import supported_extensions
 from ..recipes import builtin_recipe_names, load_recipe
@@ -46,6 +47,7 @@ from ..update_check import (
 from .dialogs import BatchDialog, ExportDialog, TableDialog
 from .panels import (
     ComponentsTable,
+    CompositionPanel,
     DiagnosticsPanel,
     FitSettingsPanel,
     LogPanel,
@@ -91,6 +93,8 @@ class MainWindow(QMainWindow):
         self.runner = JobRunner(self, synchronous=synchronous_jobs)
         self.settings_store = QSettings("xps-autofit", "studio")
         self._current_key: str | None = None
+        self._compare_keys: list[str] = []
+        """Spectra shown together in the comparison view (empty: normal view)."""
         self._update_thread: UpdateCheckThread | None = None
         self.last_update_info: UpdateInfo | None = None
         self.last_identification: Identification | None = None
@@ -115,6 +119,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.components, "Components")
         tabs.addTab(self.models, "Models")
         tabs.addTab(self.diagnostics, "Diagnostics")
+        self.composition = CompositionPanel()
+        tabs.addTab(self.composition, "Composition")
         self.tabs = tabs
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(scroll)
@@ -156,6 +162,7 @@ class MainWindow(QMainWindow):
         self.session.message.connect(self.log)
         self.tree.spectrumSelected.connect(self.select_key)
         self.tree.spectrumRenamed.connect(self.rename_spectrum)
+        self.tree.selectionKeysChanged.connect(self._on_tree_selection)
         self.plot.centerDragged.connect(self._on_center_dragged)
         self.plot.cursorMoved.connect(self._on_cursor_moved)
         self.components.componentEdited.connect(self._on_component_edited)
@@ -202,6 +209,26 @@ class MainWindow(QMainWindow):
         self.act_fit = QAction("AUTO FIT", self)
         self.act_fit.setShortcut("F5")
         self.act_fit.triggered.connect(lambda: self.auto_fit())
+        self.act_fit_all = QAction("FIT ALL", self)
+        self.act_fit_all.setShortcut("Shift+F5")
+        self.act_fit_all.setToolTip(
+            "Queue an automatic fit for every loaded spectrum (recipe region by energy "
+            "range; the panel settings for the selected one)"
+        )
+        self.act_fit_all.triggered.connect(lambda: self.fit_all())
+        self.act_align = QAction("ALIGN", self)
+        self.act_align.setShortcut("Ctrl+Shift+A")
+        self.act_align.setToolTip(
+            "Charge correction: shift every spectrum of this file so the selected "
+            "component sits at the reference energy, then refit them"
+        )
+        self.act_align.triggered.connect(self.align_charge_dialog)
+        self.act_undo = QAction("Undo", self)
+        self.act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self.act_undo.triggered.connect(lambda: self.undo())
+        self.act_redo = QAction("Redo", self)
+        self.act_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self.act_redo.triggered.connect(lambda: self.redo())
         self.act_refit = QAction("REFIT", self)
         self.act_refit.setShortcut("F6")
         self.act_refit.triggered.connect(lambda: self.refit())
@@ -256,11 +283,13 @@ class MainWindow(QMainWindow):
         bar.addSeparator()
         for a in (
             self.act_fit,
+            self.act_fit_all,
             self.act_refit,
             self.act_add,
             self.act_remove,
             self.act_uncertainty,
             self.act_identify,
+            self.act_align,
         ):
             bar.addAction(a)
         bar.addSeparator()
@@ -277,7 +306,6 @@ class MainWindow(QMainWindow):
         m_file.addAction(self.act_open)
         m_file.addAction(self.act_open_folder)
         self.menu_recent = m_file.addMenu("Recent files")
-        m_file.addAction(self.act_rename_spectrum)
         m_file.addAction(self.act_remove_spectrum)
         m_file.addSeparator()
         m_file.addAction(self.act_export)
@@ -287,21 +315,45 @@ class MainWindow(QMainWindow):
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         m_file.addAction(quit_action)
+        m_edit = self.menuBar().addMenu("&Edit")
+        for a in (self.act_undo, self.act_redo):
+            m_edit.addAction(a)
+        m_edit.addSeparator()
+        for a in (self.act_rename_spectrum, self.act_rename_component, self.act_remove_spectrum):
+            m_edit.addAction(a)
         m_an = self.menuBar().addMenu("&Analysis")
         for a in (
             self.act_fit,
+            self.act_fit_all,
             self.act_refit,
             self.act_add,
             self.act_remove,
-            self.act_rename_component,
             self.act_uncertainty,
             self.act_identify,
+            self.act_align,
             self.act_batch,
         ):
             m_an.addAction(a)
         m_view = self.menuBar().addMenu("&View")
         m_view.addAction(self.act_reset_view)
         m_view.addAction(self.act_copy_table)
+        m_view.addSeparator()
+        # Comparison view (two or more spectra selected in SAMPLES)
+        self.compare_group = QActionGroup(self)
+        self.act_norm_none = QAction("Compare: raw intensities", self)
+        self.act_norm_max = QAction("Compare: normalise to maximum", self)
+        self.act_norm_area = QAction("Compare: normalise to area", self)
+        for a in (self.act_norm_none, self.act_norm_max, self.act_norm_area):
+            a.setCheckable(True)
+            self.compare_group.addAction(a)
+            m_view.addAction(a)
+            a.triggered.connect(lambda _c=False: self._redraw_compare())
+        self.act_norm_none.setChecked(True)
+        self.act_stack = QAction("Compare: stack with offset", self)
+        self.act_stack.setCheckable(True)
+        self.act_stack.setToolTip("Waterfall: each spectrum offset by half the largest range")
+        self.act_stack.toggled.connect(lambda _on: self._redraw_compare())
+        m_view.addAction(self.act_stack)
         m_help = self.menuBar().addMenu("&Help")
         self.act_check_updates = QAction("Check for updates…", self)
         self.act_check_updates.triggered.connect(lambda: self.check_for_updates(manual=True))
@@ -470,6 +522,10 @@ class MainWindow(QMainWindow):
             self.act_identify,
             self.act_rename_spectrum,
             self.act_rename_component,
+            self.act_fit_all,
+            self.act_align,
+            self.act_undo,
+            self.act_redo,
         )
 
     def _job_started(self, label: str) -> None:
@@ -692,12 +748,197 @@ class MainWindow(QMainWindow):
         item = self.session.items[key]
         self.plot.set_title(self._title_for(item, self.session.results.get(key)))
 
+    # ------------------------------------------------------------------ undo / redo
+    def undo(self) -> bool:
+        cur = self.current()
+        if cur is None or not self.session.undo(cur[0]):
+            self.log("nothing to undo")
+            return False
+        self.log("undo")
+        return True
+
+    def redo(self) -> bool:
+        cur = self.current()
+        if cur is None or not self.session.redo(cur[0]):
+            self.log("nothing to redo")
+            return False
+        self.log("redo")
+        return True
+
+    # ------------------------------------------------------------- comparison view
+    def _on_tree_selection(self, keys: list[str]) -> None:
+        keys = [k for k in keys if k in self.session.items]
+        if len(keys) >= 2:
+            self.compare(keys)
+        elif len(keys) == 1 and self._compare_keys:
+            self._compare_keys = []
+            self.select_key(keys[0])
+
+    def compare_options(self) -> tuple[str, float]:
+        """``(normalise, stack)`` from the View menu."""
+        if self.act_norm_max.isChecked():
+            normalise = "max"
+        elif self.act_norm_area.isChecked():
+            normalise = "area"
+        else:
+            normalise = "none"
+        return normalise, 0.5 if self.act_stack.isChecked() else 0.0
+
+    def compare(self, keys: list[str]) -> int:
+        """Overlay the selected spectra (raw data) in one plot; sample series or depth
+        profiles are read side by side, normalised or stacked from the View menu."""
+        items = [self.session.items[k] for k in keys if k in self.session.items]
+        if len(items) < 2:
+            return 0
+        self._compare_keys = [k for k in keys if k in self.session.items]
+        normalise, stack = self.compare_options()
+        entries = [(it.display_name, it.spectrum) for it in items]
+        n = self.plot.show_overlay(
+            entries, normalise, stack, title=f"Comparison of {len(items)} spectra"
+        )
+        self.components.show_result(None)
+        self.models.show_selection(None)
+        self.diagnostics.setPlainText(
+            "COMPARE     "
+            + "\n            ".join(
+                f"{it.display_name:<32} {it.spectrum.n} points  "
+                f"{it.spectrum.range[0]:.1f} - {it.spectrum.range[1]:.1f} eV  "
+                f"max {float(it.spectrum.intensity.max()):.0f}"
+                for it in items
+            )
+            + f"\n\n{normalise} normalisation; {'stacked' if stack else 'overlaid'}.  "
+            "Select a single spectrum to return to its fit."
+        )
+        self.lamp.set_state("idle", "COMPARE")
+        self.log(
+            f"comparison view: {n} spectra ({normalise}, {'stacked' if stack else 'overlaid'})"
+        )
+        return n
+
+    def _redraw_compare(self) -> None:
+        if self._compare_keys:
+            self.compare(self._compare_keys)
+
+    # ------------------------------------------------------------- batch of fits
+    def fit_all(self, keys: Sequence[str] | None = None) -> int:
+        """Queue an automatic fit for every loaded spectrum (or *keys*).  Recipe
+        regions are matched by energy range; the selected spectrum uses the panel
+        settings as AUTO FIT does.  Returns the number of fits queued."""
+        targets = list(keys) if keys is not None else list(self.session.order)
+        n = 0
+        for key in targets:
+            item = self.session.items.get(key)
+            if item is None:
+                continue
+            spectrum = item.spectrum
+            region = (
+                self.settings.region_spec(spectrum)
+                if key == self._current_key
+                else (self.settings.region_for(spectrum) or self.settings.region_spec(spectrum))
+            )
+
+            def job(spec: Any = spectrum, reg: Any = region) -> Any:
+                return select_model(spec, reg)
+
+            def done(sel: Any, k: str = key, name: str = item.display_name) -> None:
+                self.session.set_selection(k, sel)
+                count = sel.best.n_components if sel.best else 0
+                self.log(f"{name}: {sel.status}, n={count}")
+
+            self.runner.queue(job, done, self._error, label=f"fit {region.name}")
+            n += 1
+        if n:
+            self.log(f"queued {n} automatic fit(s)")
+        return n
+
+    # ---------------------------------------------------------- charge correction
+    def align_charge_dialog(self) -> None:
+        cur = self.current()
+        label = self._reference_component_label()
+        if cur is None or label is None:
+            self.log("fit the reference region (usually C 1s) and select its component first")
+            return
+        if self.runner.synchronous:
+            return
+        default = 284.8
+        recipe = self.session.recipe
+        if recipe is not None and recipe.charge_reference is not None:
+            default = recipe.charge_reference.value
+        value, ok = QInputDialog.getDouble(
+            self,
+            "Charge alignment",
+            f"Reference binding energy for {label!r} (eV):",
+            default,
+            0.0,
+            5000.0,
+            2,
+        )
+        if ok:
+            self.align_charge(value, label)
+
+    def _reference_component_label(self) -> str | None:
+        """The component to align: the table selection, else the recipe's reference
+        component when it belongs to the displayed region, else the largest line."""
+        cur = self.current()
+        if cur is None:
+            return None
+        state = self.session.results.get(cur[0])
+        if state is None or state.result is None:
+            return None
+        majors = state.result.majors()
+        selected = self.components.selected_parent()
+        if selected and any(c.label == selected for c in majors):
+            return selected
+        recipe = self.session.recipe
+        if recipe is not None and recipe.charge_reference is not None and state.selection:
+            ref = recipe.charge_reference
+            if ref.component and state.selection.region.name.lower() == ref.region.lower():
+                for c in majors:
+                    if c.label.lower() == ref.component.lower():
+                        return c.label
+        return max(majors, key=lambda c: c.area).label if majors else None
+
+    def align_charge(self, reference: float, component: str | None = None) -> bool:
+        """Shift every spectrum of the current file so that *component* (of the
+        displayed fit) sits at *reference* eV, then refit the regions that had a fit.
+        The shift is recorded in each spectrum's history and in the project files."""
+        cur = self.current()
+        if cur is None:
+            return False
+        key, item = cur
+        state = self.session.results.get(key)
+        if state is None or state.result is None:
+            self.log("fit the reference region first")
+            return False
+        label = component or self._reference_component_label()
+        comp = next((c for c in state.result.majors() if c.label == label), None)
+        if comp is None:
+            self.log(f"no component called {label!r} in the displayed fit")
+            return False
+        label = comp.label
+        delta = float(reference - comp.center)
+        if abs(delta) < 0.005:  # below any energy step: nothing worth refitting
+            self.log(f"{label} already at {reference:.2f} eV; nothing to align")
+            return False
+        reason = f"charge correction: {label} {comp.center:.3f} -> {reference:.3f} eV"
+        refit = self.session.shift_file(key, delta, reason)
+        self.log(
+            f"charge alignment {delta:+.3f} eV applied to {len(self.session.siblings(key))} "
+            f"spectrum/spectra of {item.path.name} ({reason})"
+        )
+        if abs(reference - 284.8) < 0.05 or label.lower().startswith("c 1s"):
+            self.log(C1S_REFERENCE_WARNING)
+        self.select_key(key)
+        self.fit_all(refit)
+        return True
+
     # ------------------------------------------------------------------ selection
     def select_key(self, key: str) -> None:
         item = self.session.items.get(key)
         if item is None:
             return
         self._current_key = key
+        self._compare_keys = []
         spectrum = item.spectrum
         self.settings.set_range(*spectrum.range)
         self.settings.select_region_for(spectrum)
@@ -709,6 +950,7 @@ class MainWindow(QMainWindow):
             self.components.show_result(None)
             self.models.show_selection(None)
             self.diagnostics.display(None)
+            self._refresh_composition()
             self.lamp.set_state("idle")
         self.tree.select_key(key)
 
@@ -995,7 +1237,7 @@ class MainWindow(QMainWindow):
 
     def copy_current_table(self) -> None:
         widget = self.tabs.currentWidget()
-        if isinstance(widget, (ComponentsTable, ModelTable)):
+        if isinstance(widget, (ComponentsTable, ModelTable, CompositionPanel)):
             text = widget.copy_to_clipboard(selected_only=False)
             self.log(f"copied {len(text.splitlines()) - 1} rows to the clipboard")
         else:
@@ -1026,6 +1268,20 @@ class MainWindow(QMainWindow):
         self.tree.set_status(key, state.status)
         if key == self._current_key:
             self._display_state(key, state)
+        elif self._current_key is not None and key in self.session.siblings(self._current_key):
+            self._refresh_composition()
+
+    def _refresh_composition(self) -> None:
+        """Composition of the current file from every fitted region in it."""
+        cur = self.current()
+        if cur is None:
+            self.composition.show_result(None, "")
+            return
+        key, item = cur
+        self.composition.show_result(
+            self.session.composition(key),
+            f"{item.path.name}: {len(self.session.siblings(key))} spectrum/spectra",
+        )
 
     def _display_state(self, key: str, state: RegionState) -> None:
         item = self.session.items[key]
@@ -1037,6 +1293,7 @@ class MainWindow(QMainWindow):
         self.components.show_result(result)
         self.models.show_selection(sel)
         self.diagnostics.display(result, sel, state.status, state.bootstrap)
+        self._refresh_composition()
         self.lamp.set_state(state.status)
 
     # ------------------------------------------------------------------ export / batch

@@ -10,7 +10,11 @@ Width parameters are full widths at half maximum (eV):
 * ``voigt(x, area, center, fwhm_g, fwhm_l)`` - exact convolution via
   :func:`scipy.special.voigt_profile`
 * ``pseudo_voigt(x, area, center, fwhm, eta)`` - ``eta * L + (1 - eta) * G`` with a
-  common FWHM
+  common FWHM (the *sum* form, CasaXPS ``SGL(p)`` with ``p = 100 eta``)
+* ``gl_product(x, area, center, fwhm, eta)`` - ``G**(1 - eta) * L**eta`` (the
+  *product* form, CasaXPS ``GL(p)`` with ``p = 100 eta``); ``fwhm`` is the width
+  parameter of that definition, the measured FWHM is up to 6 % smaller at
+  intermediate ``eta`` and is what :func:`total_fwhm` reports
 * ``doniach_sunjic(x, area, center, fwhm_g, fwhm_l, asym)`` - Doniach-Sunjic line
   (asymmetry ``asym`` = alpha, tail towards high binding energy) convolved with a
   Gaussian; for ``asym = 0`` it is the Voigt profile.  Its tail is not integrable,
@@ -24,9 +28,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.optimize import brentq
 from scipy.signal import fftconvolve
+from scipy.special import erfcx, voigt_profile
 from scipy.special import gamma as gamma_function
-from scipy.special import voigt_profile
 
 SQRT_2LN2 = float(np.sqrt(2.0 * np.log(2.0)))
 #: Half-width (in units of the Voigt FWHM) of the window over which the area of a
@@ -63,6 +68,55 @@ def pseudo_voigt(x: np.ndarray, area: float, center: float, fwhm: float, eta: fl
 def voigt_fwhm(fwhm_g: float, fwhm_l: float) -> float:
     """Total FWHM of a Voigt profile (Olivero & Longbothum 1977, error below 0.02 %)."""
     return 0.5346 * fwhm_l + np.sqrt(0.2166 * fwhm_l**2 + fwhm_g**2)
+
+
+def _gl_product_coefficients(fwhm: float, eta: float) -> tuple[float, float]:
+    """``(a, b)`` of the unit-height product ``exp(-a t**2) / (1 + b t**2)``."""
+    f2 = max(float(fwhm), 1e-9) ** 2
+    m = float(np.clip(eta, 0.0, 1.0))
+    return 4.0 * np.log(2.0) * (1.0 - m) / f2, 4.0 * m / f2
+
+
+def gl_product_integral(fwhm: float, eta: float) -> float:
+    """Integral over the line of the unit-height product form.
+
+    ``int exp(-a t^2) / (1 + b t^2) dt = pi / sqrt(b) * exp(a / b) * erfc(sqrt(a / b))``,
+    evaluated with the scaled complementary error function so that it stays finite
+    for small ``eta``; the limits are the Gaussian (``eta = 0``) and the Lorentzian
+    (``eta = 1``) integrals.
+    """
+    a, b = _gl_product_coefficients(fwhm, eta)
+    if b <= 0.0:  # pure Gaussian
+        return float(np.sqrt(np.pi / a))
+    if a <= 0.0:  # pure Lorentzian
+        return float(np.pi / np.sqrt(b))
+    return float(np.pi / np.sqrt(b) * erfcx(np.sqrt(a / b)))
+
+
+def gl_product(x: np.ndarray, area: float, center: float, fwhm: float, eta: float) -> np.ndarray:
+    """Gaussian-Lorentzian *product* line (CasaXPS ``GL(p)``, ``p = 100 eta``).
+
+    ``G(t)**(1 - eta) * L(t)**eta`` with both factors of the same width parameter
+    ``fwhm``, normalised to ``area``.
+    """
+    a, b = _gl_product_coefficients(fwhm, eta)
+    t = np.asarray(x, dtype=float) - center
+    shape = np.exp(-a * t**2) / (1.0 + b * t**2)
+    return area / gl_product_integral(fwhm, eta) * shape
+
+
+def gl_product_fwhm(fwhm: float, eta: float) -> float:
+    """Measured full width at half maximum of the product form (equal to ``fwhm`` for
+    ``eta`` 0 or 1, up to about 6 % smaller in between)."""
+    a, b = _gl_product_coefficients(fwhm, eta)
+    if a <= 0.0 or b <= 0.0:
+        return float(fwhm)
+
+    def half(t: float) -> float:
+        return float(np.exp(-a * t * t) / (1.0 + b * t * t) - 0.5)
+
+    hi = float(fwhm)  # the product is below both factors, so its half-width is < fwhm/2
+    return 2.0 * float(brentq(half, 0.0, hi))
 
 
 def _ds_core(t: np.ndarray, gamma: float, alpha: float) -> np.ndarray:
@@ -158,6 +212,7 @@ SHAPES: dict[str, ShapeInfo] = {
     "lorentzian": ShapeInfo("lorentzian", lorentzian, ("fwhm",)),
     "voigt": ShapeInfo("voigt", voigt, ("fwhm_g", "fwhm_l")),
     "pseudo_voigt": ShapeInfo("pseudo_voigt", pseudo_voigt, ("fwhm", "eta")),
+    "gl_product": ShapeInfo("gl_product", gl_product, ("fwhm", "eta")),
     "doniach_sunjic": ShapeInfo("doniach_sunjic", doniach_sunjic, ("fwhm_g", "fwhm_l", "asym")),
 }
 #: Shapes whose width is parametrised as Gaussian + Lorentzian FWHM.
@@ -183,6 +238,8 @@ def total_fwhm(shape: str, **widths: float) -> float:
         return float(voigt_fwhm(widths["fwhm_g"], widths["fwhm_l"]))
     if shape == "doniach_sunjic":
         return doniach_sunjic_fwhm(widths["fwhm_g"], widths["fwhm_l"], widths["asym"])
+    if shape == "gl_product":
+        return gl_product_fwhm(widths["fwhm"], widths["eta"])
     return float(widths["fwhm"])
 
 

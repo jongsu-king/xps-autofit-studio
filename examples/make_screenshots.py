@@ -101,6 +101,38 @@ def main(out_dir: str | Path) -> list[Path]:
         p = out / "gui_survey_identify.png"
         win.grab().save(str(p))
         written.append(p)
+
+        # 5. Composition tab: both regions of the multi-region VAMAS file (FIT ALL)
+        keys = win.load_files([str(data / "p3ht_aged_multi.vms")])
+        win.use_recipe("p3ht")
+        win.select_key(keys[0])
+        win.fit_all(keys)
+        app.processEvents()
+        for k in keys:
+            win.select_key(k)
+            win.run_uncertainty(40)
+            app.processEvents()
+        win.select_key(keys[1])
+        win.tabs.setCurrentWidget(win.composition)
+        app.processEvents()
+        p = out / "gui_composition.png"
+        win.grab().save(str(p))
+        written.append(p)
+
+        # 6. Comparison view: fresh and aged S 2p, normalised to the maximum, stacked
+        #    (the aged file is already loaded, so collect both keys from the session)
+        win.load_files([str(data / "p3ht_fresh_S2p.csv")])
+        wanted = ("p3ht_fresh_S2p.csv", "p3ht_aged_S2p.csv")
+        keys = [k for k in win.session.order if win.session.items[k].path.name in wanted]
+        win.act_norm_max.setChecked(True)
+        win.act_stack.setChecked(True)
+        win.tree.select_keys(keys)
+        app.processEvents()
+        win.tabs.setCurrentWidget(win.diagnostics)
+        app.processEvents()
+        p = out / "gui_compare.png"
+        win.grab().save(str(p))
+        written.append(p)
         win.close()
         app.processEvents()
     return written

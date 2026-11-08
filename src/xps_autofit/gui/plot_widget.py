@@ -71,6 +71,8 @@ class SpectrumPlot(QWidget):
         self._lines: dict[str, pg.InfiniteLine] = {}
         self._marks: list[pg.InfiniteLine] = []
         self._spectrum: Spectrum | None = None
+        self._view_x: np.ndarray | None = None
+        """Energy axis of the comparison view (``None`` outside it)."""
         # Crosshair: a thin vertical hairline that follows the mouse in both panels.
         self._cross_main = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(GRID, width=1))
         self._cross_resid = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(GRID, width=1))
@@ -107,8 +109,57 @@ class SpectrumPlot(QWidget):
         self.cursorMoved.emit(x, float(point.y()))
 
     def reset_view(self) -> None:
-        if self._spectrum is not None:
+        if self._view_x is not None:
+            self._fit_view(self._view_x)
+        elif self._spectrum is not None:
             self._fit_view(self._spectrum.energy)
+
+    def show_overlay(
+        self,
+        entries: list[tuple[str, Spectrum]],
+        normalise: str = "none",
+        stack: float = 0.0,
+        title: str = "",
+    ) -> int:
+        """Comparison view: several raw spectra on one axis.
+
+        ``normalise`` is ``"none"``, ``"max"`` (divide by the maximum) or ``"area"``
+        (divide by the integral); ``stack`` offsets successive spectra by that
+        fraction of the largest range (a waterfall for sample series or depth
+        profiles).  The residual panel is empty in this view.  Returns the number of
+        curves drawn.
+        """
+        self._reset()
+        self._spectrum = None
+        if not entries:
+            self._view_x = None
+            return 0
+        ys: list[np.ndarray] = []
+        for _title, spec in entries:
+            y = np.asarray(spec.intensity, dtype=float)
+            if normalise == "max" and np.max(y) > 0:
+                y = y / np.max(y)
+            elif normalise == "area":
+                area = float(np.trapezoid(y, spec.energy))
+                if area > 0:
+                    y = y / area
+            ys.append(y)
+        span = max(float(np.ptp(y)) for y in ys) or 1.0
+        for i, ((name, spec), y) in enumerate(zip(entries, ys)):
+            color = SERIES_DARK[i % len(SERIES_DARK)]
+            self.main.plot(
+                spec.energy, y + i * stack * span, pen=pg.mkPen(color, width=1.5), name=name
+            )
+        unit = {"max": "normalised to maximum", "area": "normalised to area"}.get(
+            normalise, entries[0][1].intensity_unit
+        )
+        if stack:
+            unit += ", offset"
+        self.main.setLabel("left", f"Intensity ({unit})")
+        self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
+        self._view_x = np.concatenate([np.asarray(s.energy, dtype=float) for _n, s in entries])
+        self._fit_view(self._view_x)
+        return len(entries)
 
     def shutdown(self) -> None:
         """Disconnect the mouse proxy so no timer or scene signal outlives the widget.
@@ -124,6 +175,7 @@ class SpectrumPlot(QWidget):
 
     def show_spectrum(self, spectrum: Spectrum, title: str = "") -> None:
         self._reset()
+        self._view_x = None
         self._spectrum = spectrum
         self._draw_raw(spectrum.energy, spectrum.intensity)
         self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
@@ -144,6 +196,7 @@ class SpectrumPlot(QWidget):
 
     def show_result(self, result: FitResult, title: str = "", draggable: bool = True) -> None:
         self._reset()
+        self._view_x = None
         x = result.x
         bg = result.background_total
         self._spectrum = Spectrum(x, result.y)

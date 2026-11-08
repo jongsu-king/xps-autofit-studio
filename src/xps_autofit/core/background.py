@@ -17,6 +17,9 @@ BACKGROUND_TYPES = ("none", "linear", "shirley", "tougaard")
 BACKGROUND_MODES = ("static", "active")
 #: Types for which an *active* (fitted together with the peaks) version exists.
 ACTIVE_TYPES = ("shirley", "tougaard")
+#: Default relative window of the active scattering factor around its static estimate
+#: (see :attr:`BackgroundSpec.scatter_window`); ``None`` leaves it free.
+DEFAULT_SCATTER_WINDOW: float | None = 0.3
 
 
 class BackgroundError(ValueError):
@@ -47,6 +50,12 @@ class BackgroundSpec:
     tougaard_B, tougaard_C
         Universal cross-section parameters ``F(T) = B*T / (C + T**2)**2`` (eV**2).
         ``tougaard_B=None`` scales ``B`` so the background meets the high-BE endpoint.
+    scatter_window
+        Active mode only.  The scattering factor ``k`` is kept within
+        ``[k0 / (1 + w), k0 * (1 + w)]`` around the static estimate ``k0`` (the
+        factor that makes the Shirley/Tougaard background meet the high-BE
+        endpoint).  Without the window a weak component next to the region edge
+        and ``k`` can trade off against each other; ``None`` leaves ``k`` free.
     """
 
     type: str = "shirley"
@@ -56,6 +65,7 @@ class BackgroundSpec:
     tougaard_B: float | None = None
     tougaard_C: float = 1643.0
     mode: str = "static"
+    scatter_window: float | None = DEFAULT_SCATTER_WINDOW
 
     def __post_init__(self) -> None:
         if self.type not in BACKGROUND_TYPES and self.type != "auto":
@@ -64,6 +74,8 @@ class BackgroundSpec:
             raise BackgroundError(f"background mode must be one of {BACKGROUND_MODES} or 'auto'")
         if self.endpoint_points < 1:
             raise BackgroundError("endpoint_points must be >= 1")
+        if self.scatter_window is not None and self.scatter_window <= 0:
+            raise BackgroundError("scatter_window must be positive or None (free)")
 
     @property
     def is_active(self) -> bool:
@@ -79,6 +91,7 @@ class BackgroundSpec:
             "tolerance": self.tolerance,
             "tougaard_B": self.tougaard_B,
             "tougaard_C": self.tougaard_C,
+            "scatter_window": self.scatter_window,
         }
 
     @classmethod

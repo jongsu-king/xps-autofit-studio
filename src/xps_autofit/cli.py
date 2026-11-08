@@ -71,7 +71,15 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--shape",
-        choices=["gaussian", "lorentzian", "voigt", "pseudo_voigt", "doniach_sunjic", "auto"],
+        choices=[
+            "gaussian",
+            "lorentzian",
+            "voigt",
+            "pseudo_voigt",
+            "gl_product",
+            "doniach_sunjic",
+            "auto",
+        ],
         default="voigt",
         help="doniach_sunjic: asymmetric line for metals (Gaussian-broadened)",
     )

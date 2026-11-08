@@ -303,7 +303,9 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
         report.regions.append(rr)
 
     if quant_items:
-        report.quantification = atomic_percent(quant_items)
+        hv = _photon_energy(spectra[0], recipe, options)
+        kinetic = {name: hv - be for name, be in photo_lines.items()}
+        report.quantification = atomic_percent(quant_items, recipe.quantification, kinetic)
         if quant_samples:
             atomic_percent_samples(report.quantification, quant_samples)
     return report

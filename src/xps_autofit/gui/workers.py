@@ -9,6 +9,7 @@ releases its last reference crashes in Shiboken's destructor.)
 from __future__ import annotations
 
 import traceback
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -35,7 +36,8 @@ class FitWorker(QObject):
 
 
 class JobRunner(QObject):
-    """Runs one job at a time.  ``synchronous=True`` executes inline (tests)."""
+    """Runs one job at a time; further jobs can wait in a queue.  ``synchronous=True``
+    executes inline (tests)."""
 
     started = Signal(str)
     stopped = Signal()
@@ -47,10 +49,42 @@ class JobRunner(QObject):
         self._worker: FitWorker | None = None
         self._on_done: Callable[[Any], None] | None = None
         self._on_error: Callable[[str], None] | None = None
+        self._pending: deque[
+            tuple[Callable[[], Any], Callable[[Any], None], Callable[[str], None], str]
+        ] = deque()
 
     @property
     def busy(self) -> bool:
         return self._thread is not None
+
+    @property
+    def pending(self) -> int:
+        """Jobs waiting behind the running one."""
+        return len(self._pending)
+
+    def queue(
+        self,
+        job: Callable[[], Any],
+        on_done: Callable[[Any], None],
+        on_error: Callable[[str], None],
+        label: str = "job",
+    ) -> None:
+        """Run *job* now, or after the running and already queued jobs."""
+        if self.busy:
+            self._pending.append((job, on_done, on_error, label))
+            return
+        self.start(job, on_done, on_error, label)
+
+    def cancel_pending(self) -> int:
+        """Drop the queued jobs (the running one finishes); returns how many."""
+        n = len(self._pending)
+        self._pending.clear()
+        return n
+
+    def _start_next(self) -> None:
+        if self._pending and not self.busy:
+            job, on_done, on_error, label = self._pending.popleft()
+            self.start(job, on_done, on_error, label)
 
     def start(
         self,
@@ -97,6 +131,7 @@ class JobRunner(QObject):
         self._teardown()
         if cb is not None:
             cb(result)
+        self._start_next()
 
     @Slot(str)
     def _failed(self, text: str) -> None:
@@ -104,3 +139,4 @@ class JobRunner(QObject):
         self._teardown()
         if cb is not None:
             cb(text)
+        self._start_next()

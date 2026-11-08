@@ -64,17 +64,17 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | | |
 |---|---|
 | **Input** | CSV / TXT / TSV / DAT / XY exports (sniffed delimiter, header-based column choice, decimal commas, descending axes, kinetic-energy columns) and ISO 14976 VAMAS `.vms` |
-| **Backgrounds** | Linear, Shirley, Tougaard; *static* (endpoints, optional free linear refinement) or *active* (generated from the fitted envelope with free offset and scattering factor); `auto` tries them all |
-| **Line shapes** | Gaussian, Lorentzian, Voigt, pseudo-Voigt, asymmetric Doniach-Šunjić (metals), area-normalised; `auto` chooses |
+| **Backgrounds** | Linear, Shirley, Tougaard; *static* (endpoints, optional free linear refinement) or *active* (generated from the fitted envelope with free offset and a scattering factor bounded around the endpoint estimate); `auto` tries them all |
+| **Line shapes** | Gaussian, Lorentzian, Voigt, pseudo-Voigt (sum, SGL), GL product (CasaXPS `GL(p)`), asymmetric Doniach-Šunjić (metals), area-normalised; `auto` chooses |
 | **Constraints** | Spin-orbit doublets as one component (splitting, area ratio, shared widths), width bounds, shared widths, candidate windows for chemical states, minimum separation |
 | **Model selection** | AICc / BIC among models that pass the physical checks, parsimony margin, residual diagnostics (Durbin-Watson, runs test, lag-1), multi-start and optional differential-evolution search |
 | **Robustness** | Robust loss (`soft_l1`, `huber`, `cauchy`, `arctan`), spike mask, parameter-correlation and relative-error warnings |
 | **Quality grade** | A-E per candidate with every deduction listed, in the report, the tables and the app |
 | **Uncertainties** | Covariance errors; Poisson or residual bootstrap of areas, centres, widths, fractions, propagated to atomic percentages |
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction |
-| **Quantification** | Relative composition from RSFs (Scofield table or recipe values), `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu |
+| **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu |
 | **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures, per-run summaries; `verify` reproduces a project |
-| **Desktop app** | Instrument-style PySide6/PyQtGraph window: sample tree, live plot with draggable centre lines, settings panel, Components / Models / Diagnostics tabs, editable spectrum titles and component names, bootstrap, batch, export, element identification, update notice |
+| **Desktop app** | Instrument-style PySide6/PyQtGraph window: sample tree, live plot with draggable centre lines, settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), bootstrap, batch, export, element identification, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
 ## Install
@@ -131,6 +131,9 @@ xps-autofit fit au4f.csv --range 80 92 --doublet 3.67 0.75 \
 
 # Spiky detector? Robust loss and a spike mask
 xps-autofit fit c1s.csv --range 280 294 --loss soft_l1 --mask-spikes 6
+
+# CasaXPS-style GL(30) product line shape, active Shirley background
+xps-autofit fit c1s.csv --range 280 294 --shape gl_product --background shirley --background-mode active
 
 # Uncertainties: 200 bootstrap replicates, propagated to the atomic percentages
 xps-autofit fit sample.vms --recipe cbo --bootstrap 200 --output results
@@ -304,8 +307,12 @@ software. Readers for additional formats can be registered with
 - element identification on seven synthetic surveys with no false element and the
   Bi 4f / S 2p overlap reported as ambiguous
 - bootstrap propagation to atomic percentages
-- the desktop application offscreen: loading, fitting, dragging, editing, renaming,
-  bootstrap, export, batch, identification and the update notice
+- the active background's scatter window on the C 1s case that motivated it; the GL
+  product line (normalisation, limits, width, fit recovery); the quantification
+  correction arithmetic and its recipe round trip
+- the desktop application offscreen: loading, fitting, FIT ALL, dragging, editing,
+  renaming, undo/redo, charge alignment, composition, comparison view, bootstrap,
+  export, batch, identification and the update notice
 - preservation of S 2p splitting and area ratio; correct component count on fresh
   and oxidised P3HT-like spectra; no over-fitting at low signal-to-noise
 - descending and non-uniform energy axes
@@ -315,7 +322,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (171 tests, about five minutes). Comparisons with real instrument
+Run `pytest` to execute them (192 tests, about six minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 
@@ -326,8 +333,9 @@ if you can share measured spectra for that, please open a discussion.
 | 1 | v0.1.0 | Fitting core, readers, Shirley/Tougaard, Voigt, doublets, model selection, CLI, exports |
 | 2 | v0.2.0 | PySide6 + PyQtGraph desktop app, interactive peak editing |
 | 3 | v0.3.0 | Active backgrounds, Doniach-Šunjić line, residual diagnostics, bootstrap composition errors, diagnostics / uncertainty in the app, installers |
-| 3 | v0.4.0 | Robust loss and spike mask, parameter correlations, quality grade, survey element identification, update notice (this release) |
-| 3 | v0.5.0 | RSF libraries with transmission correction, comparison views for sample series, depth-profile stacks |
+| 3 | v0.4.0 | Robust loss and spike mask, parameter correlations, quality grade, survey element identification, update notice |
+| 3 | v0.5.0 | Composition tab, charge alignment, FIT ALL, undo/redo, comparison view with stacked series, bounded active background, GL product line, energy-dependent quantification correction (this release) |
+| 3 | v0.6.0 | Instrument RSF libraries, depth-profile composition vs cycle, session files |
 | 4 | v1.0.0 | Validation against measured data and other software |
 | 5 | v2.0 | PCA / multivariate analysis, large batches, model recommendation |
 
@@ -346,13 +354,16 @@ XPS 스펙트럼을 불러와 배경 제거(Linear·Shirley·Tougaard, 피크와
 능동 배경 포함), Voigt 계열과 금속용 비대칭 Doniach-Šunjić 피팅, 스핀-궤도
 이중선 제약, AICc/BIC와 물리 검사·잔차 진단(Durbin-Watson)을 함께 쓰는 자동
 모델 선택, 강건 손실과 스파이크 마스크, 파라미터 상관 경고, 피팅마다 매기는
-품질 등급(A–E), 부트스트랩 불확도가 붙은 조성 계산, 서베이 스펙트럼의 원소
-식별, 논문용 그림과 재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는
-도구입니다. 같은 레시피를 여러 시료에 적용해 피크 수를 임의로 늘리지 않고
-비교할 수 있습니다. `xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱
-화면으로, 피크 중심선을 끌어 옮기거나 성분을 더하고 빼며 다시 피팅하고, 진단
-탭·불확도·IDENTIFY 버튼으로 결과를 점검하며, 새 버전이 나오면 상태바에
-알립니다. Windows·macOS·Linux 설치 파일은 [릴리스
+품질 등급(A–E), 부트스트랩 불확도가 붙은 조성 계산(탈출 깊이·투과 함수 보정
+선택), 서베이 스펙트럼의 원소 식별, CasaXPS식 GL(p) 곱 선형, 논문용 그림과
+재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는 도구입니다. 같은
+레시피를 여러 시료에 적용해 피크 수를 임의로 늘리지 않고 비교할 수 있습니다.
+`xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱 화면으로, 피크
+중심선을 끌어 옮기거나 성분을 더하고 빼며 다시 피팅하고(실행 취소·다시 실행),
+스펙트럼 제목과 성분 이름을 고치고, FIT ALL로 불러온 스펙트럼을 모두 피팅하고,
+ALIGN으로 전하 보정을 적용하고, Composition 탭에서 시료의 원자 백분율을 읽고,
+여러 스펙트럼을 겹쳐 보거나 쌓아 비교하며, 진단 탭·불확도·IDENTIFY 버튼으로
+결과를 점검하고, 새 버전이 나오면 상태바에 알립니다. Windows·macOS·Linux 설치 파일은 [릴리스
 페이지](https://github.com/jongsu-king/xps-autofit-studio/releases/latest)에
 있습니다.
 

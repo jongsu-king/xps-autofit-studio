@@ -69,19 +69,62 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
    spectrum: the elements whose lines explain the peaks are listed with their
    confidence, matched and missing lines and ambiguities, and the matched lines are
    marked on the spectrum (see `algorithm.md`, section 11).
+9. **FIT ALL** (Shift+F5) queues an automatic fit for every loaded spectrum: the
+   recipe region is matched by energy range for each one, the selected spectrum
+   uses the panel settings exactly as AUTO FIT does. The lamp shows the running
+   fit and the SAMPLES column fills in as the queue drains.
+10. **ALIGN** (Ctrl+Shift+A) is the charge correction. With the reference region
+    fitted (usually C 1s), it asks for the reference binding energy (the recipe's
+    `charge_reference` value, 284.8 eV by default) and shifts *every spectrum of
+    the same file* so that the chosen component - the selected table row, else the
+    recipe's reference component, else the largest line - sits at that energy. The
+    shift is written to each spectrum's history (`charge correction: ...`) and so
+    to the project files, the regions that had a fit are refitted, and the
+    adventitious-carbon caveat is logged.
+11. **Undo / Redo** (Ctrl+Z / Ctrl+Shift+Z, *Edit* menu) step through the manual
+    edits of the displayed spectrum: drags, typed values, added or removed
+    components and renames. A new AUTO FIT starts a new history.
 
 ![Interactive refit of an S 2p region with two doublets](images/gui_s2p_manual.png)
 
 ![Survey with identified element lines](images/gui_survey_identify.png)
 
+![Composition tab after fitting both regions of a sample](images/gui_composition.png)
+
+## Composition
+
+The **Composition** tab turns the fitted regions of the current file into atomic
+percentages, with the arithmetic of the batch summary: the area of each region
+(doublet total or major line, as the recipe's `rsf_applies_to` says) divided by
+its RSF - the recipe's value or, failing that, the Scofield cross-section from the
+built-in table, with the source shown - and by `KE^(a + b)` when the recipe asks
+for the escape-depth / transmission correction (`algorithm.md`, section 12). The
+kinetic energy of each line, the atomic percentages and, when every region has a
+bootstrap, their standard deviations and 95 % intervals are listed; a missing
+factor makes the sample `NOT_CALCULABLE` and the row red rather than guessed.
+*Copy table* puts it on the clipboard.
+
+## Comparison view
+
+Select two or more spectra in SAMPLES (Ctrl- or Shift-click) and the plot shows
+their raw data together, each in its own colour with the titles in the legend.
+*View > Compare* switches between raw intensities, normalisation to the maximum
+or to the area, and a stacked (offset) waterfall for sample series and depth
+profiles; **Save plot image…** exports the view. Selecting a single spectrum
+returns to its fit.
+
+![Comparison view of two S 2p spectra, normalised and stacked](images/gui_compare.png)
+
 ## Robustness and quality
 
 The *Robustness* group of the settings panel selects the loss function
 (`linear` or a robust loss with its scale) and the spike mask; both are explained
-in `algorithm.md`, section 10. The Models tab carries a **Grade** column (A-E) and
-the Diagnostics tab a QUALITY line with every deduction, and a PARAMETERS line with
-the largest cross-component correlation, the number of masked points and the loss
-in use.
+in `algorithm.md`, section 10. The *Scatter window* of the BACKGROUND group
+(enabled for active and auto modes) bounds the scattering factor of an active
+background around its endpoint estimate (`algorithm.md`, section 1; 0 = free).
+The Models tab carries a **Grade** column (A-E) and the Diagnostics tab a QUALITY
+line with every deduction, and a PARAMETERS line with the largest cross-component
+correlation, the number of masked points and the loss in use.
 
 ## Updates
 
@@ -104,7 +147,10 @@ check unless `xps-autofit update-check` is called.
   `write_region_outputs`, `run_batch`), so results are identical.
 - Settings such as the last folder and the recent-files list are stored with
   `QSettings` ("xps-autofit", "studio").
+- Fits run one at a time; FIT ALL and the refits after ALIGN wait in a queue
+  behind the running job.
 - Headless testing: set `QT_QPA_PLATFORM=offscreen` and construct
-  `MainWindow(synchronous_jobs=True)`; see `tests/test_gui.py` and
-  `tests/test_gui_features.py`. The screenshots on this page are produced the
-  same way by `examples/make_screenshots.py`.
+  `MainWindow(synchronous_jobs=True)`; see `tests/test_gui.py`,
+  `tests/test_gui_features.py`, `tests/test_gui_v04.py`, `tests/test_rename.py`
+  and `tests/test_gui_v05.py`. The screenshots on this page are produced the same
+  way by `examples/make_screenshots.py`.

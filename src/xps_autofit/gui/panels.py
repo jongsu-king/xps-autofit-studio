@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -28,11 +28,17 @@ from PySide6.QtWidgets import (
 )
 
 from ..automation.model_selection import SelectionResult
-from ..core.background import BACKGROUND_MODES, BACKGROUND_TYPES, BackgroundSpec
+from ..core.background import (
+    BACKGROUND_MODES,
+    BACKGROUND_TYPES,
+    DEFAULT_SCATTER_WINDOW,
+    BackgroundSpec,
+)
 from ..core.constraints import DoubletSpec, PeakConstraints
 from ..core.fitting import LOSSES, FitResult
 from ..core.peak_shapes import SHAPES
 from ..core.quality import grade_fit
+from ..core.quantification import QuantResult
 from ..core.region import RegionSpec
 from ..core.spectrum import Spectrum
 from ..core.uncertainty import BootstrapResult
@@ -132,6 +138,7 @@ class StatusLamp(QWidget):
 class SampleTree(QTreeWidget):
     spectrumSelected = Signal(str)
     spectrumRenamed = Signal(str, str)  # key, new title typed into the first column
+    selectionKeysChanged = Signal(list)  # keys of all selected spectra (Ctrl/Shift-click)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -139,7 +146,11 @@ class SampleTree(QTreeWidget):
         for col, width in enumerate((170, 48, 96, 96)):
             self.setColumnWidth(col, width)
         self.setAlternatingRowColors(True)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Several spectra can be selected (Ctrl/Shift-click) for the comparison view.
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.itemSelectionChanged.connect(
+            lambda: self.selectionKeysChanged.emit(self.selected_keys())
+        )
         # Only the title column is edited, and only through editItem (double-click on
         # a spectrum row or the Rename action), never by typing into another column.
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -222,6 +233,22 @@ class SampleTree(QTreeWidget):
         if item is not None:
             self.setCurrentItem(item)
 
+    def selected_keys(self) -> list[str]:
+        """Keys of the selected spectrum rows, in tree order."""
+        chosen = {id(i) for i in self.selectedItems()}
+        return [k for k, item in self._items.items() if id(item) in chosen]
+
+    def select_keys(self, keys: list[str]) -> None:
+        """Select several spectra (the first becomes current), as Ctrl-clicks would."""
+        if keys and keys[0] in self._items:
+            # NoUpdate: make it current without touching the selection
+            self.setCurrentItem(self._items[keys[0]], 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.clearSelection()
+        for k in keys:
+            item = self._items.get(k)
+            if item is not None:
+                item.setSelected(True)
+
     def _on_current(
         self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None
     ) -> None:
@@ -303,9 +330,21 @@ class FitSettingsPanel(QWidget):
         self.endpoints = QSpinBox()
         self.endpoints.setRange(1, 25)
         self.endpoints.setValue(3)
+        self.scatter_window = _dspin(0.0, 5.0, DEFAULT_SCATTER_WINDOW or 0.0, 0.1, 2)
+        self.scatter_window.setSpecialValueText("free")
+        self.scatter_window.setToolTip(
+            "Active mode: keep the scattering factor k within k0/(1+w) .. k0(1+w) of the\n"
+            "endpoint estimate k0 (0 = free). Stops a weak edge component and k from\n"
+            "trading off against each other; a warning is raised when k hits the bound."
+        )
+        self.bg_mode.currentTextChanged.connect(
+            lambda text: self.scatter_window.setEnabled(text in ("active", "auto"))
+        )
+        self.scatter_window.setEnabled(False)
         f.addRow("Type", self.background)
         f.addRow("Mode", self.bg_mode)
         f.addRow("Endpoint points", self.endpoints)
+        f.addRow("Scatter window", self.scatter_window)
         f.addRow("", self.refine)
         outer.addWidget(g_bg)
 
@@ -456,6 +495,18 @@ class FitSettingsPanel(QWidget):
         self.region_combo.setCurrentIndex(0)
         return None
 
+    def region_for(self, spectrum: Spectrum) -> RegionSpec | None:
+        """The recipe region covering *spectrum*, without touching the panel (for
+        fitting several spectra in one go); ``None`` without a recipe or match."""
+        if self._recipe is None:
+            return None
+        from ..automation.batch_fitting import match_regions
+
+        for _spectrum, region in match_regions([spectrum], self._recipe):
+            if region.fit:
+                return region
+        return None
+
     def _region_picked(self, _index: int) -> None:
         name = self.region_combo.currentData()
         if self._recipe is None or not name:
@@ -486,6 +537,7 @@ class FitSettingsPanel(QWidget):
         self.background.setCurrentText(region.background.type)
         self.bg_mode.setCurrentText(region.background.mode)
         self.endpoints.setValue(region.background.endpoint_points)
+        self.scatter_window.setValue(region.background.scatter_window or 0.0)
         self.refine.setChecked(region.refine_background)
         self.shape.setCurrentText(region.shape)
         self.min_n.setValue(region.min_components)
@@ -550,6 +602,7 @@ class FitSettingsPanel(QWidget):
                 type=self.background.currentText(),
                 endpoint_points=self.endpoints.value(),
                 mode=self.bg_mode.currentText(),
+                scatter_window=self.scatter_window.value() or None,
             ),
             refine_background=self.refine.isChecked(),
             shape=self.shape.currentText(),
@@ -857,6 +910,100 @@ def diagnostics_text(
                 parts.append(f"  centre ± {cen['std']:.3f} eV")
             lines.append(" ".join(parts))
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ composition
+COMPOSITION_HEADERS = [
+    "Region",
+    "Atomic %",
+    "±",
+    "95 % interval",
+    "Area",
+    "RSF",
+    "Source",
+    "KE (eV)",
+    "Element",
+    "Line",
+]
+_COMPOSITION_TEXT_COLUMNS = (0, 6, 8, 9)
+
+
+class CompositionPanel(QWidget):
+    """Relative composition of the current file from every fitted region in it, with
+    the same arithmetic as the batch summary (RSF, optional energy correction,
+    bootstrap intervals when every region has a bootstrap)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self.status = QLabel("")
+        self.status.setObjectName("readout")
+        self.status.setWordWrap(True)
+        self.table = CopyableTable(0, len(COMPOSITION_HEADERS))
+        self.table.setHorizontalHeaderLabels(COMPOSITION_HEADERS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        lay.addWidget(self.status)
+        lay.addWidget(self.table, 1)
+        self.result: QuantResult | None = None
+        self.show_result(None, "")
+
+    def show_result(self, quant: QuantResult | None, title: str = "") -> None:
+        self.result = quant
+        self.table.setRowCount(0)
+        head = f"{title}: " if title else ""
+        if quant is None:
+            self.status.setText(
+                head + "no fitted region yet. AUTO FIT the regions of this file (or FIT ALL); "
+                "atomic percentages appear here."
+            )
+            return
+        if quant.status == "OK":
+            self.status.setText(f"{head}atomic % from {len(quant.entries)} region(s). {quant.note}")
+        else:
+            self.status.setText(f"{head}{quant.status}. {quant.note}")
+        for e in quant.entries:
+            r = self.table.rowCount()
+            self.table.insertRow(r)
+            pct = f"{e.atomic_percent:.2f}" if e.atomic_percent is not None else "-"
+            std = f"{e.atomic_percent_std:.2f}" if e.atomic_percent_std is not None else ""
+            interval = (
+                f"[{e.atomic_percent_p2_5:.1f}, {e.atomic_percent_p97_5:.1f}]"
+                if e.atomic_percent_p2_5 is not None and e.atomic_percent_p97_5 is not None
+                else ""
+            )
+            cells = [
+                e.label,
+                pct,
+                std,
+                interval,
+                f"{e.area:.1f}",
+                f"{e.rsf:.3f}" if e.rsf else "missing",
+                e.rsf_source,
+                f"{e.kinetic_energy:.1f}" if e.kinetic_energy else "",
+                e.element or "",
+                e.line or "",
+            ]
+            missing = e.rsf is None or e.rsf <= 0
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                if c not in _COMPOSITION_TEXT_COLUMNS:
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                    )
+                if missing:
+                    item.setForeground(QColor(STATUS_COLORS["failed"]))
+                elif c == 1:
+                    item.setForeground(QColor(STATUS_COLORS["ok"]))
+                self.table.setItem(r, c, item)
+
+    def copy_to_clipboard(self, selected_only: bool = False) -> str:
+        return self.table.copy_to_clipboard(selected_only)
 
 
 class LogPanel(QPlainTextEdit):

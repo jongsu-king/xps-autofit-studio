@@ -12,6 +12,10 @@ charge_reference:              # optional
   value: 284.8                 # eV
 references:
   - citations for the candidate positions
+quantification:                # optional energy-dependent correction on top of the RSFs
+  imfp_exponent: 0.0           # a: escape depth ~ KE^a (0.6-0.75 for Scofield factors)
+  transmission_exponent: 0.0   # b: analyser transmission ~ KE^b (-1 in CRR mode)
+                               # areas are divided by RSF * KE^(a + b); both 0 = none
 regions:
   - name: S 2p                 # unique; "Element line" is matched against VAMAS metadata
     element: S
@@ -22,15 +26,19 @@ regions:
                                # mode: static (from the endpoints, fixed) | active
                                #       (Shirley/Tougaard generated from the fitted
                                #       peaks inside the fit) | auto
+                               # scatter_window: 0.3 (active: keep the scattering
+                               #       factor within k0/1.3 .. 1.3 k0 of the endpoint
+                               #       estimate k0; null = free)
     refine_background: true    # free linear term in the fit (default true)
-    shape: voigt               # gaussian | lorentzian | voigt | pseudo_voigt |
+    shape: voigt               # gaussian | lorentzian | voigt | pseudo_voigt (sum, SGL) |
+                               # gl_product (CasaXPS GL(p)) |
                                # doniach_sunjic (asymmetric, metals) | auto
     optimizer: leastsq         # leastsq | global (differential evolution, then LM)
     constraints:
       fwhm_g: [0.5, 1.8]       # Gaussian FWHM bounds (voigt, doniach_sunjic)
       fwhm_l: [0.05, 0.5]      # Lorentzian FWHM bounds (voigt, doniach_sunjic)
-      fwhm: [0.3, 3.5]         # FWHM bounds (gaussian, lorentzian, pseudo_voigt)
-      eta: [0.0, 1.0]          # pseudo_voigt mixing bounds
+      fwhm: [0.3, 3.5]         # FWHM bounds (gaussian, lorentzian, pseudo_voigt, gl_product)
+      eta: [0.0, 1.0]          # pseudo_voigt / gl_product mixing bounds (p = 100 eta)
       asym: [0.0, 0.5]         # doniach_sunjic asymmetry bounds (metals 0.05-0.2)
       share_fwhm_l: true       # one Lorentzian width for the region
       share_fwhm_g: false
@@ -80,7 +88,17 @@ overlapping regions.
 Use `mode: active` when the region edges are noisy or carry peak tails (the
 classical Shirley then starts too high or too low), and `shape: doniach_sunjic`
 for metallic lines (Au 4f, Cu 2p of Cu(0), Pt 4f, ...) whose high-BE tail a
-symmetric Voigt cannot follow. Both are described in `docs/algorithm.md`.
+symmetric Voigt cannot follow. Both are described in `docs/algorithm.md`. The
+active scattering factor stays within `scatter_window` (default ±30 %) of the
+endpoint estimate; set `scatter_window: null` to free it when the endpoints are
+known to be unreliable.
+
+`quantification` applies only to the composition: with instrument RSFs (Avantage,
+CasaXPS libraries) leave both exponents at 0, since those factors already contain
+the transmission and escape-depth dependence; with Scofield cross-sections a
+typical choice is `imfp_exponent: 0.6` plus the analyser's transmission exponent.
+The exponents are written into every summary so the convention travels with the
+numbers (`docs/algorithm.md`, section 12).
 
 Regions are matched to the spectra in a file by VAMAS `species`/`transition`
 metadata when available, otherwise by energy-range overlap (at least 60 % of the

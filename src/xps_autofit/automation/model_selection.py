@@ -138,7 +138,7 @@ def _initial_widths(region: RegionSpec, fwhm_guess: float, shape: str) -> dict[s
         if shape == "doniach_sunjic":
             widths["asym"] = float(np.clip(0.05, *c.asym))
         return widths
-    if shape == "pseudo_voigt":
+    if shape in ("pseudo_voigt", "gl_product"):
         return {"fwhm": float(np.clip(fwhm_guess, *c.fwhm)), "eta": float(np.clip(0.3, *c.eta))}
     return {"fwhm": float(np.clip(fwhm_guess, *c.fwhm))}
 

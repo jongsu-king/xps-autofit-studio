@@ -38,12 +38,24 @@ average and the Lorentzian tails of the peaks themselves. Two remedies exist:
 
   The active form is not better in every case. On synthetic data (three seeds
   each) it reproduces the S 2p and Cu 2p3/2 truths as well as or slightly better
-  than the static form, but on the four-component C 1s region its free scattering
-  factor trades area with the weak O-C=O line on the high-BE flank (largest area
-  error 22 % against 6 % static). A static background computed from the data
-  "sees" that small peak; the active one has to infer it. The static form
-  therefore stays the default; use `active` for noisy or tail-laden endpoints, or
-  `auto` and let the criterion decide.
+  than the static form, but on the four-component C 1s region (lines 0.8-0.9 eV
+  apart) the free scattering factor can trade area with the overlapping
+  components: in one of three seeds `k` drifted to 1.55 times the endpoint
+  estimate and the largest area error reached 36 % (static: 11 %). A static
+  background computed from the data "sees" the small peaks; the active one has to
+  infer them. The static form therefore stays the default; use `active` for noisy
+  or tail-laden endpoints, or `auto` and let the criterion decide.
+
+  **Scatter window** (`scatter_window`, default 0.3). Since 0.5.0 the active `k`
+  is bounded to `[k0 / (1 + w), k0 (1 + w)]` around the endpoint estimate `k0`
+  (the factor that makes the Shirley/Tougaard background meet the high-BE
+  endpoint; `info.scatter_start`). On the well-behaved synthetic regions `k`
+  never leaves ±15 % of `k0`, so the window changes nothing there; in the C 1s
+  case above it cuts the largest error from 36 % to 23 % (`w = 0.3`), 19 %
+  (`w = 0.2`) and 15 % (`w = 0.1`). A fit whose `k` ends at the edge of the
+  window carries a warning: the endpoints may be unreliable, and
+  `scatter_window: null` (GUI: 0 = free) restores the free factor. The
+  differential-evolution search respects the same bounds.
 
 ## 2. Noise and detection
 
@@ -109,7 +121,8 @@ All shapes are area-normalised so the fitted amplitude is the area:
 |-------|------------|-----|
 | `gaussian`, `lorentzian` | `fwhm` | limiting cases |
 | `voigt` | `fwhm_g`, `fwhm_l` | default; exact convolution (`scipy.special.voigt_profile`) |
-| `pseudo_voigt` | `fwhm`, `eta` | `eta L + (1 - eta) G`, CasaXPS-like GL mixing |
+| `pseudo_voigt` | `fwhm`, `eta` | `eta L + (1 - eta) G` (sum form; CasaXPS `SGL(p)`, `p = 100 eta`) |
+| `gl_product` | `fwhm`, `eta` | `G^(1 - eta) L^eta` (product form; CasaXPS `GL(p)`), normalised with the closed-form integral `pi / sqrt(b) exp(a/b) erfc(sqrt(a/b))`; `fwhm` is the width parameter of that definition and the reported FWHM is the measured one (up to 6 % smaller in between the limits) |
 | `doniach_sunjic` | `fwhm_g`, `fwhm_l`, `asym` | metals: Doniach-Sunjic line (asymmetry `alpha`, tail towards high binding energy) convolved numerically with a Gaussian |
 
 The Doniach-Sunjic tail is not integrable, so its *area* is defined as the
@@ -307,3 +320,25 @@ Pb/I/C/N/O, Bi/S/C/O, Mg/O/C, Fe/Ni/Cr/O/C) every element present is found and n
 absent element is reported; the Bi/S overlap is reported as ambiguous. Real surveys
 add satellites, plasmons and charging, so the result is a shortlist to confirm with
 high-resolution regions, never an assignment.
+
+## 12. Quantification
+
+The relative composition of a sample uses one area per region - the doublet total
+or the major line, as the recipe's `rsf_applies_to` says - and
+
+```
+n_i = (A_i / D_i) / sum_j (A_j / D_j),      D_i = RSF_i * KE_i^(a + b)
+```
+
+`RSF_i` is the recipe's relative sensitivity factor or, when the recipe gives
+none, the Scofield cross-section of the built-in table (the source is reported).
+A missing factor makes the sample `NOT_CALCULABLE` with the missing lines listed;
+no value is guessed. `KE_i = hv - BE_i` is the kinetic energy of the region's
+largest line and the exponents `a` (escape depth, `lambda ~ KE^a`, 0.6-0.75) and
+`b` (analyser transmission, `T ~ KE^b`) come from the recipe's `quantification`
+block; both default to 0, i.e. no correction, which is right for instrument RSF
+libraries that already contain those dependences. Whatever the choice, the note
+of the result states it. Bootstrap replicates of the region areas are divided by
+the same `D_i` before the atomic percentages and their intervals are formed
+(section 8), so the uncertainties follow the convention. The app's Composition
+tab and the batch `summary_quantification.csv` run this same code.

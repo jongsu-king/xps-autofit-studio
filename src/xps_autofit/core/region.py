@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .background import ACTIVE_TYPES, BACKGROUND_MODES, BACKGROUND_TYPES, BackgroundSpec
@@ -188,15 +188,7 @@ class RegionSpec:
         mode = background_mode or self.background.mode
         if bg_type == AUTO or shp == AUTO or mode == AUTO:
             raise ValueError("fit_settings() needs a concrete background type, mode and shape")
-        bg = BackgroundSpec(
-            type=bg_type,
-            endpoint_points=self.background.endpoint_points,
-            max_iterations=self.background.max_iterations,
-            tolerance=self.background.tolerance,
-            tougaard_B=self.background.tougaard_B,
-            tougaard_C=self.background.tougaard_C,
-            mode=mode,
-        )
+        bg = replace(self.background, type=bg_type, mode=mode)
         return FitSettings(
             shape=shp,
             background=bg,

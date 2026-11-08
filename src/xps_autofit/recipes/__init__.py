@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from ..core.quantification import QuantCorrection
 from ..core.region import RegionSpec
 
 
@@ -36,6 +37,8 @@ class Recipe:
     regions: list[RegionSpec] = field(default_factory=list)
     source: str = ""
     references: list[str] = field(default_factory=list)
+    quantification: QuantCorrection = field(default_factory=QuantCorrection)
+    """Energy-dependent correction applied on top of the RSFs (none by default)."""
 
     def region(self, name: str) -> RegionSpec | None:
         for r in self.regions:
@@ -52,6 +55,7 @@ class Recipe:
             "regions": [r.to_dict() for r in self.regions],
             "source": self.source,
             "references": list(self.references),
+            "quantification": self.quantification.to_dict(),
         }
 
 
@@ -77,6 +81,7 @@ def recipe_from_dict(d: dict[str, Any], source: str = "") -> Recipe:
         regions=regions,
         source=source,
         references=[str(r) for r in d.get("references", [])],
+        quantification=QuantCorrection.from_dict(d.get("quantification")),
     )
 
 

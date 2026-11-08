@@ -6,6 +6,62 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
+Composition in the app, charge alignment, comparison views, a bounded active
+background, the CasaXPS product line shape and an energy-dependent quantification
+correction.
+
+### Added - algorithm
+- **Scatter window for active backgrounds** (`background.scatter_window`, default
+  0.3; GUI *Scatter window*, 0 = free). The scattering factor `k` of an active
+  Shirley/Tougaard background is bounded to `[k0 / 1.3, 1.3 k0]` around the
+  endpoint estimate `k0`, which is now stored as `info.scatter_start`. On the
+  well-behaved synthetic regions `k` never leaves ±15 % of `k0`, so nothing
+  changes there; on the four-component C 1s where `k` drifted to 1.55 `k0` the
+  largest area error drops from 36 % to 23 % (15 % with a ±10 % window). A fit
+  whose `k` ends on the window edge carries a warning; `null` restores the free
+  factor. The differential-evolution search respects the same bounds.
+- **`gl_product` line shape**: the Gaussian-Lorentzian *product* `G^(1-eta) L^eta`
+  (CasaXPS `GL(p)`, `p = 100 eta`), area-normalised with the closed-form integral
+  `pi/sqrt(b) exp(a/b) erfc(sqrt(a/b))` (evaluated with `erfcx`, so small `eta`
+  does not overflow). `fwhm` is the width parameter of that definition; the
+  reported FWHM is the measured one (up to 6 % smaller between the limits).
+  Available in recipes, `--shape gl_product` and the GUI; not part of `auto`.
+- **Energy-dependent quantification correction** (`quantification:
+  {imfp_exponent, transmission_exponent}` in a recipe, `QuantCorrection`): areas
+  are divided by `KE^(a + b)` in addition to the RSF, for cross-section factors
+  that lack the instrument's escape-depth and transmission dependence. Off by
+  default; the exponents are stated in every output and the result is
+  `NOT_CALCULABLE` when a kinetic energy is missing. Bootstrap replicates use the
+  same divisor.
+
+### Added - desktop application
+- **Composition tab**: atomic percentages of the current file from every fitted
+  region in it, with the recipe's RSF or, failing that, the Scofield table
+  (source shown), kinetic energies, the recipe's correction and bootstrap
+  intervals when every region has a bootstrap. Same arithmetic as the batch
+  summary; copies as TSV.
+- **FIT ALL** (Shift+F5): queues an automatic fit for every loaded spectrum
+  (recipe region matched by energy range; the panel settings for the selected
+  one). The job runner now has a queue.
+- **ALIGN** (Ctrl+Shift+A): charge correction in the app. Shifts every spectrum of
+  the current file so the chosen component (table selection, the recipe's
+  reference component, or the largest line) sits at the reference energy, records
+  the shift in each spectrum's history and the project file, and refits the regions
+  that had a fit. The C 1s adventitious-carbon caveat is logged.
+- **Undo / Redo** (Ctrl+Z / Ctrl+Shift+Z, Edit menu) for component edits: drags,
+  typed values, added and removed components, renames. A new automatic fit starts
+  a new history. The Rename actions moved to the Edit menu.
+- **Comparison view**: select two or more spectra in SAMPLES (Ctrl/Shift-click) to
+  overlay their raw data; *View* offers raw / normalised to maximum / normalised
+  to area and a stacked (offset) waterfall for sample series and depth profiles.
+  Selecting one spectrum returns to its fit.
+- *Scatter window* control in the BACKGROUND group (enabled for active/auto).
+
+### Changed
+- Tests: 192 (21 new: engine 7, line shapes 8, desktop 6).
+
 ## [0.4.1] - 2026-11-08
 
 Editable names in the desktop application; archiving and publishing metadata.
