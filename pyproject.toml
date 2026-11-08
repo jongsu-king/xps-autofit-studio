@@ -49,7 +49,11 @@ xps-autofit = "xps_autofit.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/jongsu-king/xps-autofit-studio"
+Documentation = "https://github.com/jongsu-king/xps-autofit-studio/tree/main/docs"
+Changelog = "https://github.com/jongsu-king/xps-autofit-studio/blob/main/CHANGELOG.md"
+Source = "https://github.com/jongsu-king/xps-autofit-studio"
 Issues = "https://github.com/jongsu-king/xps-autofit-studio/issues"
+Releases = "https://github.com/jongsu-king/xps-autofit-studio/releases"
 
 [tool.hatch.version]
 path = "src/xps_autofit/__init__.py"

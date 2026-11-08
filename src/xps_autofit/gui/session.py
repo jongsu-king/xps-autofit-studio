@@ -10,7 +10,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Signal
 
 from ..automation.model_selection import Candidate, SelectionResult
-from ..core.fitting import FitResult
+from ..core.fitting import FitResult, rename_component
 from ..core.spectrum import Spectrum
 from ..core.uncertainty import BootstrapResult
 from ..readers import read_spectra
@@ -144,4 +144,49 @@ class Session(QObject):
     def set_bootstrap(self, key: str, boot: BootstrapResult) -> None:
         st = self.state(key)
         st.bootstrap = boot
+        self.resultChanged.emit(key)
+
+    # ------------------------------------------------------------------ renaming
+    def rename_spectrum(self, key: str, name: str) -> bool:
+        """Give the spectrum a title of the user's choosing.
+
+        The name is stored on the spectrum itself (with a ``rename`` step in its
+        history), so the tree, the plot title, the exported figure and the project
+        file all show it; output file names keep the source file's stem.  Returns
+        ``False`` when nothing changed (unknown key, empty or identical name).
+        """
+        item = self.items.get(key)
+        name = name.strip()
+        if item is None or not name or name == item.display_name:
+            return False
+        old = item.display_name
+        item.spectrum.name = name
+        item.spectrum.history.append({"step": "rename", "from": old, "to": name})
+        st = self.results.get(key)
+        if st is not None and st.selection is not None:
+            st.selection.spectrum.name = name
+        self.spectraChanged.emit()
+        return True
+
+    def rename_component(self, key: str, old: str, new: str) -> None:
+        """Rename a fitted component (and its minor doublet line) of the displayed
+        result without refitting; the fit status is unchanged.
+
+        Raises ``ValueError`` (from :func:`rename_component`) when there is no fit,
+        the component is unknown, or the name is empty or already used.
+        """
+        st = self.results.get(key)
+        result = st.result if st is not None else None
+        if st is None or result is None:
+            raise ValueError("run AUTO FIT first; there is no component to rename")
+        renamed = rename_component(result, old, new)
+        if renamed is result:
+            return
+        if st.manual is not None:
+            st.manual = renamed
+        else:
+            assert st.selection is not None and st.selection.best is not None
+            st.selection.best.result = renamed
+        if st.bootstrap is not None:
+            st.bootstrap = st.bootstrap.renamed(old, new.strip())
         self.resultChanged.emit(key)

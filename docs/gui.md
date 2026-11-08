@@ -43,6 +43,17 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
    **+ Component** (placed at the largest residual) and **- Component** (selected
    row). Manual results are labelled MANUAL FIT and keep the automatic candidates
    for comparison.
+   - **Names.** Double-click a component's name in the Components tab (or select
+     the row and press Shift+F2, *Analysis > Rename component…*) to call it what
+     it is (`C-C`, `C-O`, `S(VI)` …). The minor doublet line, the legend, the
+     centre-line label, the Diagnostics readout, a bootstrap and every export use
+     the new name; nothing is refitted and the fit status does not change. Empty
+     and duplicate names are refused (the log says why).
+   - **Titles.** Double-click a spectrum in SAMPLES (or F2, *File > Rename
+     spectrum…*) to give it a title. It replaces the name read from the file in
+     the tree, the plot title, the exported figure and the project file (with a
+     `rename` step in the spectrum history); output file names keep the source
+     file's stem, so a renamed spectrum still overwrites its own earlier export.
 5. **UNCERTAINTY** (F7) bootstraps the displayed fit (Poisson replicates for
    counts, resampled residuals otherwise) and adds standard deviations and 95 %
    intervals of areas, fractions and centres to the Diagnostics tab. The bootstrap

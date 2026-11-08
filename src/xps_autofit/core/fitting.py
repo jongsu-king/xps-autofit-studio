@@ -18,7 +18,7 @@ of the classical algorithms and keeps background and peaks self-consistent.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import lmfit
@@ -920,7 +920,7 @@ def _build_result(
         elif shape not in GL_SHAPES:
             fw_err = _stderr(p[f"{key}_fwhm"])
         comp = Component(
-            label=f"{s.label} (minor)" if minor else s.label,
+            label=minor_label(s.label) if minor else s.label,
             shape=shape,
             is_minor=minor,
             parent=s.label,
@@ -1053,3 +1053,40 @@ def specs_from_result(result: FitResult) -> list[ComponentSpec]:
             new.asym = c.asym
         out.append(new)
     return out
+
+
+def minor_label(label: str) -> str:
+    """Label of the minor doublet line that belongs to the major line *label*."""
+    return f"{label} (minor)"
+
+
+def rename_component(result: FitResult, old: str, new: str) -> FitResult:
+    """A copy of *result* in which the chemical component *old* (the label of a major
+    line) is called *new*.
+
+    The major line, its minor doublet line (``"<new> (minor)"``) and the spec the
+    component was fitted from are renamed together, so refits, tables, figures and the
+    project file all carry the new name.  Nothing numerical changes; parameter names
+    (``c0_area`` ...) stay as they are.
+
+    Raises ``ValueError`` for an unknown component, an empty name or a name another
+    component already has.
+    """
+    new = new.strip()
+    labels = [c.label for c in result.majors()]
+    if old not in labels:
+        raise ValueError(f"no component called {old!r}")
+    if not new:
+        raise ValueError("a component name cannot be empty")
+    if new == old:
+        return result
+    if new in labels:
+        raise ValueError(f"a component called {new!r} already exists")
+    components = [
+        replace(c, label=minor_label(new) if c.is_minor else new, parent=new)
+        if c.parent == old
+        else c
+        for c in result.components
+    ]
+    specs = [replace(s, label=new) if s.label == old else s for s in result.specs]
+    return replace(result, components=components, specs=specs)

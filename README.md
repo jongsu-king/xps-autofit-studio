@@ -74,7 +74,7 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu |
 | **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures, per-run summaries; `verify` reproduces a project |
-| **Desktop app** | Instrument-style PySide6/PyQtGraph window: sample tree, live plot with draggable centre lines, settings panel, Components / Models / Diagnostics tabs, bootstrap, batch, export, element identification, update notice |
+| **Desktop app** | Instrument-style PySide6/PyQtGraph window: sample tree, live plot with draggable centre lines, settings panel, Components / Models / Diagnostics tabs, editable spectrum titles and component names, bootstrap, batch, export, element identification, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
 ## Install
@@ -304,6 +304,8 @@ software. Readers for additional formats can be registered with
 - element identification on seven synthetic surveys with no false element and the
   Bi 4f / S 2p overlap reported as ambiguous
 - bootstrap propagation to atomic percentages
+- the desktop application offscreen: loading, fitting, dragging, editing, renaming,
+  bootstrap, export, batch, identification and the update notice
 - preservation of S 2p splitting and area ratio; correct component count on fresh
   and oxidised P3HT-like spectra; no over-fitting at low signal-to-noise
 - descending and non-uniform energy axes
@@ -313,7 +315,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (164 tests, about five minutes). Comparisons with real instrument
+Run `pytest` to execute them (171 tests, about five minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 

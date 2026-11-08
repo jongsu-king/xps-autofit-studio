@@ -206,6 +206,10 @@ class SpectrumPlot(QWidget):
         self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
         self._fit_view(x)
 
+    def set_title(self, title: str) -> None:
+        """Change the plot title without redrawing (after a rename)."""
+        self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
+
     def _fit_view(self, x: np.ndarray) -> None:
         """Fix the x range from the data and auto-scale y; pyqtgraph's deferred
         auto-range otherwise alternates with the empty range left by ``clear()``."""

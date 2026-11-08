@@ -1,0 +1,33 @@
+{
+  "title": "XPS AutoFit Studio",
+  "description": "<p>Automated, reproducible X-ray photoelectron spectroscopy (XPS) peak fitting: physics-constrained model selection (AICc/BIC among models that pass spin-orbit, width and separation checks), static and active Shirley/Tougaard backgrounds, Voigt and Doniach-&Scaron;unji&cacute; line shapes, robust loss and spike masking, bootstrap uncertainties propagated to compositions, survey element identification, batch processing, a desktop application and a JSON project file that reproduces every number.</p>",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "MIT",
+  "creators": [
+    {
+      "name": "Lim, Jongsu"
+    }
+  ],
+  "keywords": [
+    "XPS",
+    "X-ray photoelectron spectroscopy",
+    "peak fitting",
+    "Shirley background",
+    "Tougaard background",
+    "Voigt",
+    "Doniach-Sunjic",
+    "model selection",
+    "VAMAS",
+    "surface analysis",
+    "Python"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/jongsu-king/xps-autofit-studio",
+      "relation": "isSupplementTo",
+      "resource_type": "software",
+      "scheme": "url"
+    }
+  ]
+}

@@ -131,6 +131,7 @@ class StatusLamp(QWidget):
 # ---------------------------------------------------------------------- sample tree
 class SampleTree(QTreeWidget):
     spectrumSelected = Signal(str)
+    spectrumRenamed = Signal(str, str)  # key, new title typed into the first column
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -139,11 +140,18 @@ class SampleTree(QTreeWidget):
             self.setColumnWidth(col, width)
         self.setAlternatingRowColors(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Only the title column is edited, and only through editItem (double-click on
+        # a spectrum row or the Rename action), never by typing into another column.
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.currentItemChanged.connect(self._on_current)
+        self.itemDoubleClicked.connect(self._on_double_clicked)
+        self.itemChanged.connect(self._on_item_changed)
         self._items: dict[str, QTreeWidgetItem] = {}
+        self._loading = False
 
     def populate(self, items: list[LoadedSpectrum], status: dict[str, str]) -> None:
         current = self.current_key()
+        self._loading = True
         self.clear()
         self._items.clear()
         by_file: dict[str, QTreeWidgetItem] = {}
@@ -166,12 +174,35 @@ class SampleTree(QTreeWidget):
                 ]
             )
             child.setData(0, Qt.ItemDataRole.UserRole, it.key)
+            child.setFlags(child.flags() | Qt.ItemFlag.ItemIsEditable)
+            child.setToolTip(0, "Double-click (or F2) to rename")
             st = status.get(it.key, "idle")
             child.setForeground(3, QColor(STATUS_COLORS.get(st, "#898781")))
             node.addChild(child)
             self._items[it.key] = child
+        self._loading = False
         if current in self._items:
             self.setCurrentItem(self._items[current])
+
+    def edit_current_title(self) -> bool:
+        """Open the inline editor on the selected spectrum's title; ``False`` when a
+        file node or nothing is selected."""
+        item = self.currentItem()
+        if item is None or not item.data(0, Qt.ItemDataRole.UserRole):
+            return False
+        self.editItem(item, 0)
+        return True
+
+    def _on_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        if item.data(0, Qt.ItemDataRole.UserRole):
+            self.editItem(item, 0)
+
+    def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        if self._loading or column != 0:
+            return
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        if key:
+            self.spectrumRenamed.emit(str(key), item.text(0))
 
     def set_status(self, key: str, state: str) -> None:
         item = self._items.get(key)
@@ -557,6 +588,9 @@ COMPONENT_HEADERS = [
 
 class ComponentsTable(CopyableTable):
     componentEdited = Signal(str, str, float)  # parent label, field, value
+    componentRenamed = Signal(str, str)  # parent label, new name typed into column 0
+
+    EDITABLE_COLUMNS = (0, 1, 7, 8)  # name, centre, FWHM G, FWHM L (major lines only)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, len(COMPONENT_HEADERS), parent)
@@ -591,9 +625,11 @@ class ComponentsTable(CopyableTable):
                 for c, text in enumerate(values):
                     item = QTableWidgetItem(text)
                     item.setData(Qt.ItemDataRole.UserRole, comp.parent)
-                    editable = (not comp.is_minor) and c in (1, 7, 8)
+                    editable = (not comp.is_minor) and c in self.EDITABLE_COLUMNS
                     if not editable:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    elif c == 0:
+                        item.setToolTip("Double-click to rename the component")
                     if c > 0:
                         item.setTextAlignment(
                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -607,8 +643,26 @@ class ComponentsTable(CopyableTable):
             return None
         return str(items[0].data(Qt.ItemDataRole.UserRole))
 
+    def edit_selected_name(self) -> bool:
+        """Open the inline editor on the selected component's name; ``False`` when no
+        major line is selected."""
+        rows = sorted({i.row() for i in self.selectedItems()})
+        if not rows:
+            return False
+        item = self.item(rows[0], 0)
+        if item is None or not item.flags() & Qt.ItemFlag.ItemIsEditable:
+            return False
+        self.editItem(item)
+        return True
+
     def _changed(self, item: QTableWidgetItem) -> None:
         if self._loading:
+            return
+        parent = str(item.data(Qt.ItemDataRole.UserRole))
+        if item.column() == 0:
+            new = item.text().strip()
+            if new != parent:
+                self.componentRenamed.emit(parent, new)
             return
         field = {1: "center", 7: "fwhm_g", 8: "fwhm_l"}.get(item.column())
         if field is None:
@@ -617,7 +671,7 @@ class ComponentsTable(CopyableTable):
             value = float(item.text())
         except ValueError:
             return
-        self.componentEdited.emit(str(item.data(Qt.ItemDataRole.UserRole)), field, value)
+        self.componentEdited.emit(parent, field, value)
 
 
 # ------------------------------------------------------------------- model table

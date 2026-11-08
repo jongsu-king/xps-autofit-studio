@@ -14,7 +14,14 @@ from typing import Any
 
 import numpy as np
 
-from .fitting import FitError, FitResult, FitSettings, fit_peaks, specs_from_result
+from .fitting import (
+    FitError,
+    FitResult,
+    FitSettings,
+    fit_peaks,
+    minor_label,
+    specs_from_result,
+)
 from .spectrum import Spectrum
 
 
@@ -38,6 +45,24 @@ class BootstrapResult:
             "mode": self.mode,
             "summary": self.summary,
         }
+
+    def renamed(self, old: str, new: str) -> BootstrapResult:
+        """The same replicates with component *old* (and its minor line) called *new*;
+        the counterpart of :func:`xps_autofit.core.fitting.rename_component`."""
+        mapping = {old: new, minor_label(old): minor_label(new)}
+
+        def key(label: str) -> str:
+            return mapping.get(label, label)
+
+        return BootstrapResult(
+            n_requested=self.n_requested,
+            n_succeeded=self.n_succeeded,
+            mode=self.mode,
+            summary={key(k): v for k, v in self.summary.items()},
+            area_samples={key(k): v for k, v in self.area_samples.items()},
+            total_area_samples=self.total_area_samples,
+            major_area_samples=self.major_area_samples,
+        )
 
 
 _ATTRS = ("area", "center", "fwhm", "fraction", "component_fraction")

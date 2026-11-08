@@ -155,9 +155,11 @@ class MainWindow(QMainWindow):
         self.session.resultChanged.connect(self._on_result_changed)
         self.session.message.connect(self.log)
         self.tree.spectrumSelected.connect(self.select_key)
+        self.tree.spectrumRenamed.connect(self.rename_spectrum)
         self.plot.centerDragged.connect(self._on_center_dragged)
         self.plot.cursorMoved.connect(self._on_cursor_moved)
         self.components.componentEdited.connect(self._on_component_edited)
+        self.components.componentRenamed.connect(self.rename_component)
         self.models.modelPicked.connect(self._show_model)
         self.settings.recipe_combo.currentIndexChanged.connect(self._on_recipe_combo)
         self.runner.started.connect(self._job_started)
@@ -237,6 +239,18 @@ class MainWindow(QMainWindow):
             "Survey: list the elements whose lines explain the peaks and mark them"
         )
         self.act_identify.triggered.connect(lambda: self.identify_current())
+        self.act_rename_spectrum = QAction("Rename spectrum…", self)
+        self.act_rename_spectrum.setShortcut("F2")
+        self.act_rename_spectrum.setToolTip(
+            "Title of the selected spectrum: tree, plot, exported figure and project file"
+        )
+        self.act_rename_spectrum.triggered.connect(self.rename_current_spectrum_dialog)
+        self.act_rename_component = QAction("Rename component…", self)
+        self.act_rename_component.setShortcut("Shift+F2")
+        self.act_rename_component.setToolTip(
+            "Name of the selected component (its doublet partner follows); no refit"
+        )
+        self.act_rename_component.triggered.connect(self.rename_component_dialog)
         for a in (self.act_open, self.act_open_folder):
             bar.addAction(a)
         bar.addSeparator()
@@ -263,6 +277,7 @@ class MainWindow(QMainWindow):
         m_file.addAction(self.act_open)
         m_file.addAction(self.act_open_folder)
         self.menu_recent = m_file.addMenu("Recent files")
+        m_file.addAction(self.act_rename_spectrum)
         m_file.addAction(self.act_remove_spectrum)
         m_file.addSeparator()
         m_file.addAction(self.act_export)
@@ -278,6 +293,7 @@ class MainWindow(QMainWindow):
             self.act_refit,
             self.act_add,
             self.act_remove,
+            self.act_rename_component,
             self.act_uncertainty,
             self.act_identify,
             self.act_batch,
@@ -452,6 +468,8 @@ class MainWindow(QMainWindow):
             self.act_export,
             self.act_uncertainty,
             self.act_identify,
+            self.act_rename_spectrum,
+            self.act_rename_component,
         )
 
     def _job_started(self, label: str) -> None:
@@ -593,6 +611,86 @@ class MainWindow(QMainWindow):
         items = [self.session.items[k] for k in self.session.order]
         status = {k: st.status for k, st in self.session.results.items()}
         self.tree.populate(items, status)
+
+    # ------------------------------------------------------------------ renaming
+    def rename_current_spectrum_dialog(self) -> None:
+        """F2 / File > Rename spectrum: inline editor in the tree when it has the
+        focus, otherwise a text dialog."""
+        cur = self.current()
+        if cur is None:
+            self.log("select a spectrum to rename")
+            return
+        if self.tree.hasFocus() and self.tree.edit_current_title():
+            return
+        if self.runner.synchronous:  # headless: the dialog would block
+            return
+        name, ok = QInputDialog.getText(self, "Rename spectrum", "Title:", text=cur[1].display_name)
+        if ok:
+            self.rename_spectrum(cur[0], name)
+
+    def rename_spectrum(self, key: str, name: str) -> bool:
+        """Set the spectrum's title; it appears in the tree, the plot title, the
+        exported figure and the project file.  File names are unchanged."""
+        item = self.session.items.get(key)
+        if item is None:
+            return False
+        old = item.display_name
+        if not self.session.rename_spectrum(key, name):
+            self._refresh_tree()  # an empty or unchanged edit: show the old title again
+            return False
+        self._refresh_title(key)
+        self.log(f"renamed spectrum {old!r} to {item.display_name!r}")
+        return True
+
+    def rename_component_dialog(self) -> None:
+        """Shift+F2 / Analysis > Rename component: inline editor in the Components
+        table when it has the focus, otherwise a text dialog."""
+        cur = self.current()
+        label = self.components.selected_parent()
+        if cur is None or label is None:
+            self.log("select a component row to rename")
+            return
+        if self.components.hasFocus() and self.components.edit_selected_name():
+            return
+        if self.runner.synchronous:
+            return
+        name, ok = QInputDialog.getText(self, "Rename component", "Name:", text=label)
+        if ok:
+            self.rename_component(label, name)
+
+    def rename_component(self, old: str, new: str) -> bool:
+        """Rename a component of the displayed fit (and its minor doublet line) in the
+        tables, the plot, the diagnostics, a bootstrap and the exports.  No refit; the
+        fit status does not change.  A rejected name is logged and the table shows the
+        old one again."""
+        cur = self.current()
+        if cur is None:
+            return False
+        key = cur[0]
+        try:
+            self.session.rename_component(key, old, new)
+        except ValueError as exc:
+            self.log(f"rename: {exc}")
+            state = self.session.results.get(key)
+            if state is not None and state.result is not None:
+                self._display_state(key, state)
+            return False
+        if new.strip() != old:
+            self.log(f"renamed component {old!r} to {new.strip()!r}")
+        return True
+
+    def _title_for(self, item: Any, state: RegionState | None) -> str:
+        if state is None or state.result is None:
+            return str(item.display_name)
+        sel = state.selection
+        n = len(state.result.majors())
+        return f"{item.display_name} - {sel.region.name if sel else ''} (n={n}, {state.status})"
+
+    def _refresh_title(self, key: str) -> None:
+        if key != self._current_key:
+            return
+        item = self.session.items[key]
+        self.plot.set_title(self._title_for(item, self.session.results.get(key)))
 
     # ------------------------------------------------------------------ selection
     def select_key(self, key: str) -> None:
@@ -935,9 +1033,7 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         sel = state.selection
-        n = len(result.majors())
-        title = f"{item.display_name} - {sel.region.name if sel else ''} (n={n}, {state.status})"
-        self.plot.show_result(result, title)
+        self.plot.show_result(result, self._title_for(item, state))
         self.components.show_result(result)
         self.models.show_selection(sel)
         self.diagnostics.display(result, sel, state.status, state.bootstrap)

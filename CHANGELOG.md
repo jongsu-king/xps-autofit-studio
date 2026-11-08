@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-08
+
+Editable names in the desktop application; archiving and publishing metadata.
+
+### Added
+- **Rename spectra and components in the app.** Double-click a spectrum in SAMPLES
+  (or F2, *File > Rename spectrum…*) to give it a title: it appears in the tree,
+  the plot title, the exported figure and the project file (`source.spectrum_name`,
+  `original_spectrum.name`, plus a `rename` step in the spectrum history); output
+  file names keep the source file's stem. Double-click a component's name in the
+  Components tab (or Shift+F2, *Analysis > Rename component…*) to rename it: the
+  minor doublet line, the stored spec, the legend and centre-line label, the
+  Components table, the Diagnostics readout, a bootstrap and every export follow.
+  A rename is not a refit: the numbers and the fit status are unchanged; empty and
+  duplicate names are refused and logged.
+- `rename_component(result, old, new)` and `minor_label()` in `core.fitting`,
+  `BootstrapResult.renamed()`, `Session.rename_spectrum()` and
+  `Session.rename_component()` for scripts and tests.
+- `.zenodo.json`, so that releases archived on Zenodo carry the title, author,
+  licence and keywords; `CITATION.cff` updated.
+- `publish.yml` workflow: builds and checks the distributions of every published
+  release and uploads them to PyPI through trusted publishing (no tokens), once the
+  publisher is registered on PyPI (repository variable `PYPI_TRUSTED_PUBLISHER`).
+- Project URLs for the package index (documentation, changelog, source).
+
+### Changed
+- Tests: 171 (7 new, for renaming).
+
 ## [0.4.0] - 2026-11-08
 
 Robust fitting, a quality grade for every fit, survey element identification and
