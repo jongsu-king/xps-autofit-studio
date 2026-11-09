@@ -14,6 +14,7 @@ batch processing · a desktop application · one project file that reproduces ev
 <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB">
 <img alt="Platforms" src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-555">
 <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-green"></a>
+<a href="https://doi.org/10.5281/zenodo.24071088"><img alt="DOI" src="https://zenodo.org/badge/DOI/10.5281/zenodo.24071088.svg"></a>
 </p>
 
 <p align="center">
@@ -349,7 +350,10 @@ engine stays GUI-free, fits run on raw data, every number reproduces, reference
 data cite a source). Questions and fitting advice go to
 [Discussions](https://github.com/jongsu-king/xps-autofit-studio/discussions).
 `CITATION.cff` has the citation metadata (GitHub shows a *Cite this repository*
-button).
+button). Every release is archived on Zenodo: the concept DOI
+[10.5281/zenodo.24071088](https://doi.org/10.5281/zenodo.24071088) always resolves
+to the latest version, and each release has its own DOI (0.5.0:
+[10.5281/zenodo.24071089](https://doi.org/10.5281/zenodo.24071089)).
 
 ## 한국어 요약
 

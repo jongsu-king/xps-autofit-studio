@@ -37,10 +37,13 @@ jobs:
           ls -l dist
       - name: Version matches the tag
         run: |
+          # Read the version from the source file: importing the package would need
+          # its dependencies, which this job does not install.
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          VERSION=$(PYTHONPATH=src python -c 'import xps_autofit; print(xps_autofit.__version__)')
+          VERSION=$(python -c "import re, pathlib; print(re.search(r'^__version__ = \"([^\"]+)\"', pathlib.Path('src/xps_autofit/__init__.py').read_text(), re.M).group(1))")
           echo "tag $TAG, package $VERSION"
           test "$TAG" = "v$VERSION"
+          ls dist | grep -F "xps_autofit-$VERSION-" >/dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: dist

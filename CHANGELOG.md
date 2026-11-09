@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The PyPI publish workflow read the package version by importing it, which
+  needs the dependencies its build job does not install; it now reads the
+  version from the source file and also checks the built wheel's name.
+
+### Added
+- Zenodo DOI badge and `doi` / `identifiers` in `CITATION.cff` (concept DOI
+  10.5281/zenodo.24071088; 0.5.0: 10.5281/zenodo.24071089).
+
 ## [0.5.0] - 2026-11-09
 
 Composition in the app, charge alignment, comparison views, a bounded active

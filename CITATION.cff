@@ -5,6 +5,14 @@ abstract: "Automated, reproducible XPS peak fitting with physical constraints, s
 type: software
 version: 0.5.0
 date-released: 2026-11-09
+doi: 10.5281/zenodo.24071089
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24071088
+    description: "Concept DOI: resolves to the latest archived release"
+  - type: doi
+    value: 10.5281/zenodo.24071089
+    description: "Version 0.5.0"
 license: MIT
 repository-code: "https://github.com/jongsu-king/xps-autofit-studio"
 url: "https://github.com/jongsu-king/xps-autofit-studio"
