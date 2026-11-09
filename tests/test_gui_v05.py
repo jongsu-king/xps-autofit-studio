@@ -209,3 +209,15 @@ def test_scatter_window_control_round_trip(window):
     panel.scatter_window.setValue(0.0)
     assert window.settings.region_spec(spec).background.scatter_window is None
     assert panel.scatter_window.text() == "free"
+
+
+def test_excel_workbook_loads_into_the_tree(window, app, data_dir):
+    keys = window.load_files([str(data_dir / "p3ht_aged_multi.xlsx")])
+    assert len(keys) == 2
+    names = [window.session.items[k].display_name for k in keys]
+    assert names == ["S 2p", "C 1s"]
+    spectra = [window.session.items[k].spectrum for k in keys]
+    assert spectra[0].metadata["format"] == "Excel" and spectra[0].metadata["species"] == "S"
+    window.select_key(keys[1])
+    app.processEvents()
+    assert "p3ht_aged_multi.xlsx" in window.log_panel.toPlainText()

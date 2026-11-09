@@ -11,6 +11,7 @@
 | `cu2o_survey.csv` | 0-1200 eV survey of a Cu/O/C/N surface (all table lines, step background) | CSV, descending axis; for `xps-autofit identify` |
 | `p3ht_fresh_S2p_kinetic.csv` | same as fresh S 2p | kinetic-energy column |
 | `p3ht_aged_multi.vms` | S 2p and C 1s blocks | VAMAS, kinetic-energy abscissa |
+| `p3ht_aged_multi.xlsx` | the same S 2p and C 1s regions | Excel workbook, one worksheet per region with photon-energy row |
 | `truth.json` | generating parameters of every file | |
 
 Then:

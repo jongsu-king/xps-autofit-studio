@@ -13,6 +13,7 @@ from scipy.integrate import cumulative_trapezoid
 from .core.constraints import DoubletSpec
 from .core.peak_shapes import evaluate
 from .core.spectrum import AL_KALPHA_EV, Spectrum
+from .readers.excel_reader import write_excel
 from .readers.vamas_reader import write_vamas
 
 
@@ -283,6 +284,15 @@ def example_dataset(out_dir: str | Path, seed: int = 1) -> list[Path]:
     )
     paths.append(p)
     truths[p.name] = {"blocks": [truths["p3ht_aged_S2p.csv"], truths["p3ht_C1s.csv"]]}
+    # the same two regions as an Excel workbook, one worksheet per region
+    sheets = []
+    for spec, title in ((s_aged, "S 2p"), (c1s, "C 1s")):
+        b = spec.copy()
+        b.name = title
+        sheets.append(b)
+    p = write_excel(out / "p3ht_aged_multi.xlsx", sheets, layout="sheets", metadata=True)
+    paths.append(p)
+    truths[p.name] = truths["p3ht_aged_multi.vms"]
     (out / "truth.json").write_text(json.dumps(truths, indent=1), encoding="utf-8")
     paths.append(out / "truth.json")
     return paths

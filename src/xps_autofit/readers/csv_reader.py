@@ -6,18 +6,24 @@ decimal commas, descending energy axes and kinetic-energy columns.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from ..core.spectrum import AL_KALPHA_EV, Spectrum
+from .columns import (
+    ENERGY_EXACT,
+    ENERGY_PATTERNS,
+    INTENSITY_PATTERNS,
+    infer_axis,
+    infer_unit,
+    match_column,
+)
 
-_ENERGY_PATTERNS = ("binding", "b.e", "kinetic", "k.e", "energy", "ev")
-_ENERGY_EXACT = {"be", "ke", "e", "x", "energy"}
-_INTENSITY_PATTERNS = ("count", "intens", "cps", "c/s", "signal", "raw", "y")
-_CPS_PATTERNS = ("cps", "c/s", "counts/s", "counts per second")
+# A bare "y" in a header also marks an intensity column in text exports ("Y (counts)").
+_TEXT_INTENSITY_PATTERNS = (*INTENSITY_PATTERNS, "y")
+_TEXT_INTENSITY_EXACT = frozenset({"i", "y", "counts"})
 
 
 class TextReadError(ValueError):
@@ -106,21 +112,6 @@ def _blocks(lines: list[str], delimiter: str) -> list[tuple[list[str] | None, np
     return blocks
 
 
-def _match(
-    header: list[str] | None, patterns: tuple[str, ...], exact: set[str], exclude: int | None
-) -> int | None:
-    if not header:
-        return None
-    for i, h in enumerate(header):
-        if i == exclude:
-            continue
-        hl = h.lower()
-        base = re.sub(r"\(.*?\)|\[.*?\]", "", hl).strip()
-        if base in exact or any(p in hl for p in patterns):
-            return i
-    return None
-
-
 def _resolve_col(spec: int | str | None, header: list[str] | None, ncol: int) -> int | None:
     if spec is None:
         return None
@@ -147,8 +138,12 @@ def read_text(
     encoding: str | None = None,
     dwell_time_s: float | None = None,
     n_scans: int | None = None,
+    **_: Any,
 ) -> list[Spectrum]:
-    """Read one or more spectra from a delimited text file."""
+    """Read one or more spectra from a delimited text file.
+
+    Keyword arguments meant for other readers (``sheet`` for workbooks) are ignored.
+    """
     p = Path(path)
     text, enc = _decode(p, encoding)
     lines = text.splitlines()
@@ -161,12 +156,12 @@ def read_text(
             header = None
         e_idx = _resolve_col(energy_col, header, ncol)
         if e_idx is None:
-            e_idx = _match(header, _ENERGY_PATTERNS, _ENERGY_EXACT, None)
+            e_idx = match_column(header, ENERGY_PATTERNS, ENERGY_EXACT, None)
         if e_idx is None:
             e_idx = 0
         i_idx = _resolve_col(intensity_col, header, ncol)
         if i_idx is None:
-            i_idx = _match(header, _INTENSITY_PATTERNS, {"i", "y", "counts"}, e_idx)
+            i_idx = match_column(header, _TEXT_INTENSITY_PATTERNS, _TEXT_INTENSITY_EXACT, e_idx)
         if i_idx is None:
             i_idx = 1 if e_idx != 1 else 0
         if i_idx == e_idx:
@@ -174,28 +169,8 @@ def read_text(
 
         e_name = header[e_idx] if header else f"col{e_idx}"
         i_name = header[i_idx] if header else f"col{i_idx}"
-        ax = axis
-        if ax is None:
-            el = e_name.lower()
-            ax = (
-                "kinetic"
-                if ("kinetic" in el or re.sub(r"\(.*?\)", "", el).strip() in {"ke", "k.e."})
-                else "binding"
-            )
-        unit = intensity_unit
-        if unit is None:
-            il = i_name.lower()
-            if any(pat in il for pat in _CPS_PATTERNS):
-                unit = "cps"
-            elif "count" in il:
-                unit = "counts"
-            else:
-                col = arr[:, i_idx]
-                unit = (
-                    "counts"
-                    if np.all(np.abs(col - np.round(col)) < 1e-9) and np.all(col >= 0)
-                    else "arbitrary"
-                )
+        ax = axis if axis is not None else infer_axis(e_name)
+        unit = intensity_unit if intensity_unit is not None else infer_unit(i_name, arr[:, i_idx])
 
         meta: dict[str, Any] = {
             "path": str(p),

@@ -123,10 +123,13 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--element", default=None)
     p.add_argument("--line", default=None)
     p.add_argument("--rsf", type=float, default=None)
-    p.add_argument("--energy-col", default=None, help="text files: energy column name or index")
     p.add_argument(
-        "--intensity-col", default=None, help="text files: intensity column name or index"
+        "--energy-col", default=None, help="text/Excel files: energy column name or index"
     )
+    p.add_argument(
+        "--intensity-col", default=None, help="text/Excel files: intensity column name or index"
+    )
+    p.add_argument("--sheet", default=None, help="Excel files: worksheet title or 0-based index")
     p.add_argument("--intensity-unit", choices=["counts", "cps", "arbitrary"], default=None)
 
 
@@ -140,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     pi = sub.add_parser("info", help="list the spectra in files")
     pi.add_argument("files", nargs="+")
     pi.add_argument("--photon-energy", type=float, default=None)
+    pi.add_argument("--sheet", default=None, help="Excel files: worksheet title or 0-based index")
 
     pf = sub.add_parser("fit", help="fit one or more files with a recipe or an ad-hoc region")
     pf.add_argument("files", nargs="+")
@@ -220,8 +224,8 @@ def _adhoc_recipe(args: argparse.Namespace) -> Recipe:
 
 def _options(args: argparse.Namespace) -> RunOptions:
     reader_kwargs: dict[str, object] = {}
-    for key in ("energy_col", "intensity_col"):
-        v = getattr(args, key)
+    for key in ("energy_col", "intensity_col", "sheet"):
+        v = getattr(args, key, None)
         if v is not None:
             reader_kwargs[key] = int(v) if str(v).isdigit() else v
     if args.intensity_unit:
@@ -303,9 +307,13 @@ def _print_report(batch: BatchReport) -> None:
 
 
 def cmd_info(args: argparse.Namespace) -> int:
+    kwargs: dict[str, object] = {"photon_energy": args.photon_energy}
+    sheet = getattr(args, "sheet", None)
+    if sheet is not None:
+        kwargs["sheet"] = int(sheet) if str(sheet).isdigit() else sheet
     for f in args.files:
         try:
-            spectra = read_spectra(f, photon_energy=args.photon_energy)
+            spectra = read_spectra(f, **kwargs)
         except Exception as exc:
             print(f"{f}: cannot read ({exc})")
             continue

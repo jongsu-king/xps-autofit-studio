@@ -15,8 +15,10 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
 ## Workflow
 
 1. **Open files…**, **Open folder…**, the **Recent files** menu, or drop files and
-   folders onto the window (CSV, TXT, VAMAS, …). Each spectrum in a file becomes a
-   row under its file in SAMPLES. **Remove spectrum** (Delete) takes the selected
+   folders onto the window (CSV, TXT, VAMAS, Excel workbooks, …). Each spectrum in a
+   file becomes a row under its file in SAMPLES: for a workbook, one row per
+   worksheet, per table, or per intensity column, named after the sheet, the table
+   title or the column header. **Remove spectrum** (Delete) takes the selected
    row out again.
 2. Pick a **Recipe**; the region matching the selected spectrum is chosen
    automatically and its settings fill the panel. Without a recipe the panel is an

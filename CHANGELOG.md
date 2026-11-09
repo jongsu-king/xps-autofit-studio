@@ -9,8 +9,27 @@ All notable changes to this project are documented here. The format follows
 ## [0.5.0] - 2026-11-09
 
 Composition in the app, charge alignment, comparison views, a bounded active
-background, the CasaXPS product line shape and an energy-dependent quantification
-correction.
+background, the CasaXPS product line shape, an energy-dependent quantification
+correction and Excel workbooks as input.
+
+### Added - file formats
+- **Excel workbooks** (`.xlsx`, `.xlsm`) are read everywhere files are accepted:
+  the command line, batch folders, the desktop application's Open / drop / folder
+  actions. Every worksheet is scanned for numeric tables (a header row above a run
+  of at least five numeric rows); the energy column is found by header (`Binding
+  Energy (eV)`, `BE`, `KE`, `eV` ...) or, without one, as the monotonic uniformly
+  spaced column. One sheet per region, one intensity column per sample on a shared
+  axis, energy/intensity pairs side by side (ragged lengths allowed), several
+  tables in one sheet and vendor exports with `Background` / `Envelope` /
+  `Residual` / peak columns next to the measured `Counts / s` column all read as
+  intended. Rows such as `Photon energy | 1486.6`, `Dwell time (s) | 0.1` and
+  `Number of scans | 10` are used; kinetic-energy columns are converted; decimal
+  commas and cached formula results are accepted. Sheet titles or table titles
+  like `C1s Scan` set `species` / `transition`, so recipes match them as they match
+  VAMAS blocks. `--sheet`, `--energy-col`, `--intensity-col` (index, Excel letter
+  or header) override the choice. `write_excel` writes the three layouts for
+  fixtures and interchange; `xps-autofit synth` adds `p3ht_aged_multi.xlsx`.
+- Workbooks without their extension are recognised by content (zip signature).
 
 ### Added - algorithm
 - **Scatter window for active backgrounds** (`background.scatter_window`, default
@@ -60,7 +79,9 @@ correction.
 - *Scatter window* control in the BACKGROUND group (enabled for active/auto).
 
 ### Changed
-- Tests: 192 (21 new: engine 7, line shapes 8, desktop 6). The test process now
+- The text and Excel readers share one set of header heuristics
+  (`readers/columns.py`); `Counts / s` with spaces is now recognised as cps.
+- Tests: 201 (30 new: engine 7, line shapes 8, desktop 7, Excel input 8). The test process now
   ends without the interpreter's finalisation when Qt was used: PySide6 objects
   collected at shutdown had aborted green CI runs on Linux / Python 3.11 (exit
   134, `bool_dealloc`); the summary, coverage and exit status are unaffected.

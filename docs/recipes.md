@@ -100,8 +100,9 @@ typical choice is `imfp_exponent: 0.6` plus the analyser's transmission exponent
 The exponents are written into every summary so the convention travels with the
 numbers (`docs/algorithm.md`, section 12).
 
-Regions are matched to the spectra in a file by VAMAS `species`/`transition`
-metadata when available, otherwise by energy-range overlap (at least 60 % of the
-region range must be covered).
+Regions are matched to the spectra in a file by `species`/`transition` metadata
+when available (VAMAS blocks; Excel sheet or table titles such as `C1s Scan` or
+`Region S 2p`), otherwise by energy-range overlap (at least 60 % of the region
+range must be covered).
 
 `xps-autofit recipes --show <name>` prints a built-in recipe in this format.

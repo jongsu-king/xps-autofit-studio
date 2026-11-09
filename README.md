@@ -63,7 +63,7 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 
 | | |
 |---|---|
-| **Input** | CSV / TXT / TSV / DAT / XY exports (sniffed delimiter, header-based column choice, decimal commas, descending axes, kinetic-energy columns) and ISO 14976 VAMAS `.vms` |
+| **Input** | CSV / TXT / TSV / DAT / XY exports (sniffed delimiter, header-based column choice, decimal commas, descending axes, kinetic-energy columns), Excel workbooks `.xlsx` / `.xlsm` (one sheet per region, one column per sample, side-by-side pairs, vendor exports with background / envelope / peak columns) and ISO 14976 VAMAS `.vms` |
 | **Backgrounds** | Linear, Shirley, Tougaard; *static* (endpoints, optional free linear refinement) or *active* (generated from the fitted envelope with free offset and a scattering factor bounded around the endpoint estimate); `auto` tries them all |
 | **Line shapes** | Gaussian, Lorentzian, Voigt, pseudo-Voigt (sum, SGL), GL product (CasaXPS `GL(p)`), asymmetric Doniach-Šunjić (metals), area-normalised; `auto` chooses |
 | **Constraints** | Spin-orbit doublets as one component (splitting, area ratio, shared widths), width bounds, shared widths, candidate windows for chemical states, minimum separation |
@@ -282,6 +282,7 @@ project file and propagates them to the atomic percentages in
 | Format | Notes |
 |--------|-------|
 | CSV / TSV / TXT / DAT / XY / ASC | Delimiter sniffed; header used to find energy and intensity columns; decimal commas; descending axes; several numeric blocks per file; `Kinetic Energy` columns converted (photon energy from `--photon-energy`, default Al K-alpha 1486.6 eV) |
+| Excel `.xlsx` / `.xlsm` | Every worksheet scanned for numeric tables; energy column by header (`Binding Energy (eV)`, `BE`, `KE`, `eV`) or as the monotonic column; one sheet per region, one intensity column per sample on a shared axis, energy/intensity pairs side by side, several tables per sheet; vendor `Background` / `Envelope` / `Residual` / peak columns skipped in favour of the measured `Counts / s`; `Photon energy`, `Dwell time`, `Number of scans` rows used; sheet or table titles like `C1s Scan` matched to recipe regions; `--sheet`, `--energy-col`, `--intensity-col` override |
 | VAMAS `.vms` | ISO 14976 NORM / REGULAR and IRREGULAR scans; kinetic energy converted with the source energy; dwell time and scans kept for weights. Files with parameter inclusion/exclusion lists are rejected with a message |
 
 Intensity in **counts** enables Poisson weighting. For **cps** files weights need the
@@ -316,13 +317,15 @@ software. Readers for additional formats can be registered with
 - preservation of S 2p splitting and area ratio; correct component count on fresh
   and oxidised P3HT-like spectra; no over-fitting at low signal-to-noise
 - descending and non-uniform energy axes
-- CSV variants, kinetic-energy columns and a VAMAS round trip
+- CSV variants, kinetic-energy columns, a VAMAS round trip and Excel workbooks in
+  every supported layout (sheet per region, shared-axis series, side-by-side pairs,
+  vendor exports, metadata rows, column overrides, content sniffing)
 - identical results from batch and single runs
 - project save / load / verify, including robust fits
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (192 tests, about six minutes). Comparisons with real instrument
+Run `pytest` to execute them (201 tests, about six minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 
@@ -350,7 +353,7 @@ button).
 
 ## 한국어 요약
 
-XPS 스펙트럼을 불러와 배경 제거(Linear·Shirley·Tougaard, 피크와 함께 피팅하는
+XPS 스펙트럼(CSV·TXT·VAMAS·엑셀 .xlsx)을 불러와 배경 제거(Linear·Shirley·Tougaard, 피크와 함께 피팅하는
 능동 배경 포함), Voigt 계열과 금속용 비대칭 Doniach-Šunjić 피팅, 스핀-궤도
 이중선 제약, AICc/BIC와 물리 검사·잔차 진단(Durbin-Watson)을 함께 쓰는 자동
 모델 선택, 강건 손실과 스파이크 마스크, 파라미터 상관 경고, 피팅마다 매기는
