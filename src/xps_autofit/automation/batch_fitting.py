@@ -48,6 +48,8 @@ class RunOptions:
     fixed_n: int | None = None
     bootstrap: int = 0
     plot_dpi: int = 200
+    figure_style: str = "origin"
+    """``"origin"`` (publication look) or ``"classic"`` for the PNG/SVG/PDF figures."""
     reader_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -356,10 +358,12 @@ def write_region_outputs(
     for fmt in ("png", "svg", "pdf"):
         if fmt in fmts:
             p = base.with_suffix(f".{fmt}")
-            plot_fit(result, p, title=title, dpi=options.plot_dpi)
+            plot_fit(result, p, title=title, dpi=options.plot_dpi, style=options.figure_style)
             outputs[fmt] = str(p)
             if fmt == "png" and len(sel.candidates) > 1:
-                plot_candidates(sel, base.parent / f"{base.name}_models.png")
+                plot_candidates(
+                    sel, base.parent / f"{base.name}_models.png", style=options.figure_style
+                )
     return outputs
 
 

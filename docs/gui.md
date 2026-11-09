@@ -61,7 +61,8 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
    intervals of areas, fractions and centres to the Diagnostics tab. The bootstrap
    is cleared when the model changes.
 6. **EXPORT** (Ctrl+E) writes the same files as the command line for the current
-   spectrum (CSV, XLSX, JSON project, PNG/SVG/PDF, optional bootstrap);
+   spectrum (CSV, XLSX, JSON project, PNG/SVG/PDF in the Origin-style publication
+   look, optional bootstrap);
    **Save plot image…** (Ctrl+Shift+S) saves the live view as PNG; **Copy table**
    (Ctrl+Shift+C, or Ctrl+C inside a table) puts the current table on the clipboard
    as tab-separated text for a spreadsheet.
@@ -70,7 +71,11 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
 8. **IDENTIFY** (F8) runs the survey element identification on the selected
    spectrum: the elements whose lines explain the peaks are listed with their
    confidence, matched and missing lines and ambiguities, and the matched lines are
-   marked on the spectrum (see `algorithm.md`, section 11).
+   marked on the spectrum (see `algorithm.md`, section 11). **Analysis > Suggest
+   recipe from survey…** then writes a recipe YAML with one region per identified
+   element (range around the measured line, database doublet for an unresolved
+   p/d/f level, Scofield RSF, C 1s as charge reference) and selects it in the
+   Recipe box, ready to edit and to use with FIT ALL or BATCH.
 9. **FIT ALL** (Shift+F5) queues an automatic fit for every loaded spectrum: the
    recipe region is matched by energy range for each one, the selected spectrum
    uses the panel settings exactly as AUTO FIT does. The lamp shows the running
@@ -148,6 +153,18 @@ background around its endpoint estimate (`algorithm.md`, section 1; 0 = free).
 The Models tab carries a **Grade** column (A-E) and the Diagnostics tab a QUALITY
 line with every deduction, and a PARAMETERS line with the largest cross-component
 correlation, the number of masked points and the loss in use.
+
+## Session files
+
+**File > Save session…** (Ctrl+S) writes a `.xpsession` file with the open spectrum
+files, each spectrum's title and charge shift, the recipe in use and, for every
+fitted spectrum, the same content as its project file (data, settings, start
+values, parameters). **File > Open session…** (Ctrl+Shift+O) reads the files
+again, re-applies titles and shifts, selects the recipe and rebuilds each fit by
+re-running it from its stored start, so the parameters come back exactly; the
+candidate-model table and bootstrap replicates are not stored (AUTO FIT and
+UNCERTAINTY recreate them). Missing files and spectra are reported in the log and
+the rest is restored.
 
 ## Updates
 

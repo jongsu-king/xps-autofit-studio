@@ -6,7 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added - engine and command line
+- **Origin-style figures**: the PNG/SVG/PDF figures of `fit`, `batch` and the
+  application's EXPORT use a publication look in the manner of OriginLab graphs
+  (white canvas, black frame on all four sides, inward major and minor ticks,
+  Arial-type labels, no grid, open black data symbols, red envelope, boxed
+  legend), matching the application's Origin-style plot. `--figure-style classic`
+  (`RunOptions.figure_style`, `plot_fit(style=)`) keeps the earlier look.
+- **Recipe suggestion from a survey** (`xps-autofit suggest survey.csv -o
+  recipe.yaml`, `automation.suggest.suggest_recipe`): one region per identified
+  element above a confidence threshold, built from its strongest matched
+  photoelectron line with a range around the measured peak, the database doublet
+  for an unresolved p/d/f level (listed components such as `Cu 2p3/2` are fitted
+  alone), the Scofield RSF, and C 1s at 284.8 eV as charge reference. The YAML
+  loads like any recipe.
+
 ### Added - desktop application
+- **Session files** (*File > Save session… / Open session…*, `.xpsession`): the
+  open files, titles, charge shifts, recipe and every fit (as project content) are
+  written out and restored in a fresh window; fits are rebuilt from their stored
+  start, so parameters are reproduced exactly. Candidate tables and bootstraps are
+  not stored; missing files are reported and the rest restored.
+- **Suggest recipe from survey…** (Analysis menu) after IDENTIFY: writes the
+  proposed recipe and selects it in the Recipe box.
 - **Light theme** next to the dark instrument theme (*View > Theme*, remembered
   between sessions). Both themes share one stylesheet template and the figures'
   validated palette: dark-surface series colours in the dark theme, light-surface

@@ -106,3 +106,18 @@ when available (VAMAS blocks; Excel sheet or table titles such as `C1s Scan` or
 range must be covered).
 
 `xps-autofit recipes --show <name>` prints a built-in recipe in this format.
+
+## A recipe from a survey
+
+`xps-autofit suggest survey.csv -o my_sample.yaml` identifies the elements in a
+survey and writes a recipe with one region per element above the confidence
+threshold (`--min-confidence 0.5`): the strongest matched photoelectron line, a
+range of `--half-width 8` eV on each side of the *measured* peak (so a charged
+sample gets shifted ranges), the spin-orbit doublet from the database when the
+line is an unresolved `2p` / `3d` / `4f` (a listed component such as `Cu 2p3/2`
+is fitted on its own, like the built-in recipes), the Scofield RSF where the table
+has one, and adventitious carbon at 284.8 eV as the charge reference when a C 1s
+region is present. The same proposal is available in the application after
+IDENTIFY (*Analysis > Suggest recipe from survey…*). It is a starting point:
+adjust ranges and component counts and add `candidates` before trusting the
+compositions.

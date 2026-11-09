@@ -72,10 +72,10 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Robustness** | Robust loss (`soft_l1`, `huber`, `cauchy`, `arctan`), spike mask, parameter-correlation and relative-error warnings |
 | **Quality grade** | A-E per candidate with every deduction listed, in the report, the tables and the app |
 | **Uncertainties** | Covariance errors; Poisson or residual bootstrap of areas, centres, widths, fractions, propagated to atomic percentages |
-| **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction |
+| **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction; `suggest` turns the result into a recipe (regions around the measured lines, database doublets, Scofield RSFs, C 1s charge reference) |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu |
-| **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures, per-run summaries; `verify` reproduces a project |
-| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), bootstrap, batch, export, element identification, update notice |
+| **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), per-run summaries; `verify` reproduces a project |
+| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), bootstrap, batch, export, element identification with recipe suggestion, session files, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
 ## Install
@@ -116,6 +116,9 @@ xps-autofit synth --out examples/data
 
 # What is in the sample?  Elements identified from a survey scan
 xps-autofit identify examples/data/cu2o_survey.csv
+
+# Turn that identification into a recipe (one region per element) to edit and use
+xps-autofit suggest examples/data/cu2o_survey.csv -o cu_survey_recipe.yaml
 
 # What is in a file?
 xps-autofit info examples/data/p3ht_aged_multi.vms
@@ -263,7 +266,10 @@ For each file and region (`<file>__<region>`):
 - `_fit.csv` - energy, raw, background, net, envelope, residual, each component
 - `_models.csv` / `_models.png` - every candidate model with AICc, BIC, chi-square,
   Durbin-Watson, largest correlation, grade and the physical checks
-- `.png` / `.svg` / `.pdf` - publication figure with residual panel
+- `.png` / `.svg` / `.pdf` - publication figure with residual panel, in the
+  Origin-style look by default (white canvas, black frame on all four sides,
+  inward ticks, Arial-type labels, red envelope, boxed legend); `--figure-style
+  classic` gives the earlier look with a soft grid
 - `.json` - project file: data, settings, initial values, parameters, mask,
   correlations, grade, versions
 - `.xlsx` - the same tables in one workbook
@@ -271,6 +277,8 @@ For each file and region (`<file>__<region>`):
 Per run: `summary_regions.csv` (with `grade`, `quality_score`, `durbin_watson`,
 `max_correlation`), `summary_components.csv`, `summary_quantification.csv` (and
 `summary.xlsx`).
+
+![Origin-style publication figure of an S 2p fit](docs/images/figure_s2p_origin.png)
 
 Standard errors come from the covariance matrix (rescaled by reduced chi-square
 only for unweighted fits). `--bootstrap N` adds Poisson or residual bootstrap
@@ -324,11 +332,15 @@ software. Readers for additional formats can be registered with
   every supported layout (sheet per region, shared-axis series, side-by-side pairs,
   vendor exports, metadata rows, column overrides, content sniffing)
 - identical results from batch and single runs
+- Origin-style and classic figures (box axes, tick direction, colours), recipe
+  suggestion from a synthetic survey (regions, doublets, RSFs, charge reference,
+  charged sample, command line) and session files (titles, shifts, fits, recipe
+  restored in a fresh window; missing files tolerated)
 - project save / load / verify, including robust fits
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (206 tests, about seven minutes). Comparisons with real instrument
+Run `pytest` to execute them (211 tests, about seven minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 
@@ -341,7 +353,7 @@ if you can share measured spectra for that, please open a discussion.
 | 3 | v0.3.0 | Active backgrounds, Doniach-Šunjić line, residual diagnostics, bootstrap composition errors, diagnostics / uncertainty in the app, installers |
 | 3 | v0.4.0 | Robust loss and spike mask, parameter correlations, quality grade, survey element identification, update notice |
 | 3 | v0.5.0 | Composition tab, charge alignment, FIT ALL, undo/redo, comparison view with stacked series, bounded active background, GL product line, energy-dependent quantification correction (this release) |
-| 3 | v0.6.0 | Instrument RSF libraries, depth-profile composition vs cycle, session files |
+| 3 | v0.6.0 | Session files, recipe suggestion from a survey, Origin-style figures and plot (on `main`); instrument RSF libraries, depth-profile composition vs cycle |
 | 4 | v1.0.0 | Validation against measured data and other software |
 | 5 | v2.0 | PCA / multivariate analysis, large batches, model recommendation |
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import traceback
 from collections.abc import Sequence
 from dataclasses import replace
@@ -32,12 +33,13 @@ from ..automation.batch_fitting import RunOptions, run_batch, write_region_outpu
 from ..automation.identify import Identification, identify_elements
 from ..automation.model_selection import select_model
 from ..automation.peak_detection import residual_peak
+from ..automation.suggest import suggest_recipe
 from ..core.constraints import check_physical
 from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_result
 from ..core.preprocessing import C1S_REFERENCE_WARNING
 from ..core.uncertainty import BootstrapResult, bootstrap
 from ..readers import supported_extensions
-from ..recipes import builtin_recipe_names, load_recipe
+from ..recipes import Recipe, builtin_recipe_names, load_recipe, save_recipe
 from ..update_check import (
     RELEASES_URL,
     Fetcher,
@@ -58,6 +60,7 @@ from .panels import (
 )
 from .plot_widget import SpectrumPlot
 from .session import RegionState, Session
+from .session_file import SESSION_SUFFIX, restore_session, save_session
 from .theme import (
     DEFAULT_PLOT_STYLE,
     DEFAULT_THEME,
@@ -225,6 +228,16 @@ class MainWindow(QMainWindow):
         self.act_open.triggered.connect(self.open_files_dialog)
         self.act_open_folder = QAction("Open folder…", self)
         self.act_open_folder.triggered.connect(self.open_folder_dialog)
+        self.act_save_session = QAction("Save session…", self)
+        self.act_save_session.setShortcut(QKeySequence.StandardKey.Save)
+        self.act_save_session.setToolTip(
+            "Write the open files, titles, charge shifts, recipe and fits to a .xpsession file"
+        )
+        self.act_save_session.triggered.connect(self.save_session_dialog)
+        self.act_open_session = QAction("Open session…", self)
+        self.act_open_session.setShortcut("Ctrl+Shift+O")
+        self.act_open_session.setToolTip("Reload the files of a session and rebuild its fits")
+        self.act_open_session.triggered.connect(self.open_session_dialog)
         self.act_fit = QAction("AUTO FIT", self)
         self.act_fit.setShortcut("F5")
         self.act_fit.triggered.connect(lambda: self.auto_fit())
@@ -285,6 +298,11 @@ class MainWindow(QMainWindow):
             "Survey: list the elements whose lines explain the peaks and mark them"
         )
         self.act_identify.triggered.connect(lambda: self.identify_current())
+        self.act_suggest = QAction("Suggest recipe from survey…", self)
+        self.act_suggest.setToolTip(
+            "After IDENTIFY: write a recipe with one region per element (range, doublet, RSF)"
+        )
+        self.act_suggest.triggered.connect(self.suggest_recipe_dialog)
         self.act_rename_spectrum = QAction("Rename spectrum…", self)
         self.act_rename_spectrum.setShortcut("F2")
         self.act_rename_spectrum.setToolTip(
@@ -325,6 +343,10 @@ class MainWindow(QMainWindow):
         m_file.addAction(self.act_open)
         m_file.addAction(self.act_open_folder)
         self.menu_recent = m_file.addMenu("Recent files")
+        m_file.addSeparator()
+        m_file.addAction(self.act_open_session)
+        m_file.addAction(self.act_save_session)
+        m_file.addSeparator()
         m_file.addAction(self.act_remove_spectrum)
         m_file.addSeparator()
         m_file.addAction(self.act_export)
@@ -349,6 +371,7 @@ class MainWindow(QMainWindow):
             self.act_remove,
             self.act_uncertainty,
             self.act_identify,
+            self.act_suggest,
             self.act_align,
             self.act_batch,
         ):
@@ -637,6 +660,70 @@ class MainWindow(QMainWindow):
         self.log_panel.log(text)
 
     # ------------------------------------------------------------------ files
+    # ------------------------------------------------------------- session files
+    def save_session_dialog(self) -> None:
+        if not self.session.order:
+            self.log("nothing to save: no spectra are open")
+            return
+        default = Path(str(self.settings_store.value("last_dir", str(Path.home()))))
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save session",
+            str(default / f"session{SESSION_SUFFIX}"),
+            f"XPS AutoFit session (*{SESSION_SUFFIX})",
+        )
+        if path:
+            self.save_session(path)
+
+    def save_session(self, path: str | Path) -> Path:
+        """Write the open files, titles, shifts, recipe and fits to a session file."""
+        p = save_session(path, self.session)
+        n_fits = sum(1 for k in self.session.order if self.session.state(k).result is not None)
+        self.log(f"session saved: {p.name} ({len(self.session.order)} spectra, {n_fits} fits)")
+        self.settings_store.setValue("last_dir", str(p.parent))
+        return p
+
+    def open_session_dialog(self) -> None:
+        default = Path(str(self.settings_store.value("last_dir", str(Path.home()))))
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open session", str(default), f"XPS AutoFit session (*{SESSION_SUFFIX})"
+        )
+        if path:
+            self.open_session(path)
+
+    def open_session(self, path: str | Path) -> list[str]:
+        """Reload a session: files, titles, shifts, recipe, and every stored fit.
+
+        Returns the keys of the spectra the session refers to that are now open.
+        """
+        try:
+            report = restore_session(path, self.session, self.log)
+        except (OSError, ValueError, KeyError) as exc:
+            self.log(f"cannot open session {Path(path).name}: {exc}")
+            return []
+        recipe = report.recipe or {}
+        source = str(recipe.get("source") or "")
+        if source.startswith("builtin:"):
+            self.use_recipe(source.split(":", 1)[1])
+        elif source and Path(source).is_file():
+            self.use_recipe_file(source)
+        elif recipe.get("name"):
+            self.log(f"recipe {recipe['name']!r} of the session is not available here")
+        self._refresh_tree()
+        for key in report.keys:
+            st = self.session.results.get(key)
+            if st is not None:
+                self.tree.set_status(key, st.status)
+        if report.keys:
+            self.select_key(report.restored[0] if report.restored else report.keys[0])
+        self._remember_recent(list(dict.fromkeys(k.rsplit("#", 1)[0] for k in report.keys)))
+        self.log(
+            f"session {Path(path).name}: {len(report.keys)} spectra, "
+            f"{len(report.restored)} fits restored"
+            + (f", {len(report.messages)} problem(s) listed above" if report.messages else "")
+        )
+        return report.keys
+
     def open_files_dialog(self) -> None:
         pats = " ".join(f"*{e}" for e in supported_extensions())
         start = self.settings_store.value("last_dir", str(Path.home()))
@@ -1061,6 +1148,61 @@ class MainWindow(QMainWindow):
         idx = self.settings.recipe_combo.findData(name)
         if idx >= 0:
             self.settings.recipe_combo.setCurrentIndex(idx)
+
+    def use_recipe_file(self, path: str | Path) -> None:
+        """Load a recipe YAML that is not built in and select it in the panel."""
+        p = Path(path)
+        combo = self.settings.recipe_combo
+        idx = combo.findData(str(p))
+        if idx < 0:
+            combo.addItem(f"{p.stem} (file)", str(p))
+            idx = combo.count() - 1
+        combo.setCurrentIndex(idx)
+
+    # ------------------------------------------------------------ recipe suggestion
+    def suggest_recipe_dialog(self) -> None:
+        ident = self.last_identification
+        if ident is None:
+            self.log("run IDENTIFY on a survey first; the suggestion is built from its result")
+            return
+        default = Path(str(self.settings_store.value("last_dir", str(Path.home()))))
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", ident.spectrum_name).strip("_") or "survey"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save suggested recipe", str(default / f"{stem}_recipe.yaml"), "Recipe (*.yaml)"
+        )
+        if path:
+            self.suggest_recipe_file(path)
+
+    def suggest_recipe_file(self, path: str | Path, min_confidence: float = 0.5) -> Recipe | None:
+        """Write a recipe proposed from the last identification and make it current.
+
+        One region per element above ``min_confidence``: its strongest matched
+        photoelectron line, a range around the measured peak, the database doublet for
+        an unresolved p/d/f level, the Scofield RSF, and C 1s as the charge reference.
+        Returns the recipe, or ``None`` when there is nothing to suggest.
+        """
+        ident = self.last_identification
+        if ident is None:
+            self.log("run IDENTIFY on a survey first; the suggestion is built from its result")
+            return None
+        p = Path(path)
+        try:
+            recipe = suggest_recipe(ident, name=p.stem, min_confidence=min_confidence)
+        except ValueError as exc:
+            self.log(f"no recipe to suggest: {exc}")
+            return None
+        save_recipe(recipe, p)
+        summary = "; ".join(
+            f"{r.name} {r.range[0]:.1f}-{r.range[1]:.1f} eV" for r in recipe.regions if r.range
+        )
+        self.log(f"recipe {p.name}: {len(recipe.regions)} region(s) - {summary}")
+        if recipe.charge_reference:
+            self.log(
+                f"  charge reference {recipe.charge_reference.region} at "
+                f"{recipe.charge_reference.value} eV; review ranges and component counts"
+            )
+        self.use_recipe_file(p)
+        return recipe
 
     # ------------------------------------------------------------------ fitting
     def auto_fit(self) -> bool:

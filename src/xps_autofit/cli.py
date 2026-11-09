@@ -51,6 +51,12 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
         "--photon-energy", type=float, default=None, help="eV; default from file or 1486.6"
     )
     p.add_argument("--dpi", type=int, default=200)
+    p.add_argument(
+        "--figure-style",
+        choices=["origin", "classic"],
+        default="origin",
+        help="look of the PNG/SVG/PDF figures: origin (publication, default) or classic",
+    )
     # ad-hoc region (used when no recipe is given)
     p.add_argument(
         "--range", nargs=2, type=float, metavar=("LO", "HI"), help="binding-energy window (eV)"
@@ -179,6 +185,26 @@ def build_parser() -> argparse.ArgumentParser:
     pid.add_argument("--elements", default=None, help="comma list restricting the search")
     pid.add_argument("--json", action="store_true", help="print the full result as JSON")
 
+    ps = sub.add_parser(
+        "suggest", help="propose a recipe (regions, doublets, RSFs) from a survey spectrum"
+    )
+    ps.add_argument("file", help="survey spectrum")
+    ps.add_argument("--output", "-o", default=None, help="write the recipe YAML here")
+    ps.add_argument("--name", default=None, help="recipe name (default: the file stem)")
+    ps.add_argument(
+        "--min-confidence", type=float, default=0.5, help="elements below this are left out"
+    )
+    ps.add_argument(
+        "--half-width", type=float, default=8.0, help="eV on each side of the main line"
+    )
+    ps.add_argument("--max-components", type=int, default=3)
+    ps.add_argument(
+        "--tolerance", type=float, default=1.5, help="eV between a peak and the typical position"
+    )
+    ps.add_argument("--charge-shift", type=float, default=0.0)
+    ps.add_argument("--photon-energy", type=float, default=None)
+    ps.add_argument("--elements", default=None, help="comma list restricting the search")
+
     pu = sub.add_parser("update-check", help="compare this version with the latest release")
     pu.add_argument("--json", action="store_true")
     pu.add_argument("--timeout", type=float, default=6.0)
@@ -234,6 +260,7 @@ def _options(args: argparse.Namespace) -> RunOptions:
         reader_kwargs["photon_energy"] = args.photon_energy
     return RunOptions(
         output_dir=Path(args.output),
+        figure_style=getattr(args, "figure_style", "origin"),
         formats=tuple(f.strip() for f in args.formats.split(",") if f.strip()),
         charge_correct=not args.no_charge_correction,
         seed=args.seed,
@@ -341,6 +368,51 @@ def cmd_fit(args: argparse.Namespace, paths: list[str]) -> int:
     _print_report(batch)
     failed = sum(1 for f in batch.files for r in f.regions if r.status == "failed")
     return 1 if failed and not batch.n_ok else 0
+
+
+def cmd_suggest(args: argparse.Namespace) -> int:
+    import yaml
+
+    from .automation.identify import identify_elements
+    from .automation.suggest import suggest_recipe
+    from .recipes import save_recipe
+
+    spectra = read_spectra(args.file, photon_energy=args.photon_energy)
+    survey = max(spectra, key=lambda s: s.range[1] - s.range[0])
+    elements = [e.strip() for e in args.elements.split(",")] if args.elements else None
+    ident = identify_elements(
+        survey,
+        tolerance=args.tolerance,
+        min_confidence=min(args.min_confidence, 0.3),
+        charge_shift=args.charge_shift,
+        photon_energy=args.photon_energy,
+        elements=elements,
+    )
+    try:
+        recipe = suggest_recipe(
+            ident,
+            name=args.name or Path(args.file).stem,
+            min_confidence=args.min_confidence,
+            half_width=args.half_width,
+            max_components=args.max_components,
+        )
+    except ValueError as exc:
+        print(f"{args.file}: {exc}")
+        return 1
+    for r in recipe.regions:
+        lo, hi = r.range if r.range else (float("nan"), float("nan"))
+        doublet = f"doublet {r.doublet.splitting:.2f} eV" if r.doublet else "single"
+        rsf = f"RSF {r.rsf}" if r.rsf is not None else "RSF unknown"
+        print(f"  {r.name:<10} {lo:7.1f}-{hi:6.1f} eV  {doublet:<18} {rsf}")
+    if recipe.charge_reference:
+        cr = recipe.charge_reference
+        print(f"  charge reference: {cr.region} at {cr.value} eV")
+    if args.output:
+        p = save_recipe(recipe, args.output)
+        print(f"recipe written to {p}")
+    else:
+        print(yaml.safe_dump(recipe.to_dict(), sort_keys=False, allow_unicode=True))
+    return 0
 
 
 def cmd_recipes(args: argparse.Namespace) -> int:
@@ -472,6 +544,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "info":
         return cmd_info(args)
+    if args.command == "suggest":
+        return cmd_suggest(args)
     if args.command == "identify":
         return cmd_identify(args)
     if args.command == "update-check":
