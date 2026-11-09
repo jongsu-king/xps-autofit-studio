@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import json
 import os
 from pathlib import Path
@@ -124,6 +123,7 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QLineEdit  # noqa: E402
 
+from tests.qt_helpers import dispose_window  # noqa: E402
 from xps_autofit.gui.main_window import MainWindow  # noqa: E402
 from xps_autofit.gui.theme import apply_theme  # noqa: E402
 from xps_autofit.synthetic import example_dataset  # noqa: E402
@@ -149,11 +149,7 @@ def window(app):
     win.show()
     app.processEvents()
     yield win
-    win.close()
-    win.deleteLater()
-    app.processEvents()
-    del win
-    gc.collect()
+    dispose_window(win)
     app.processEvents()
 
 

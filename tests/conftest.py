@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 import os
 import sys
 
@@ -95,25 +94,18 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
     PySide6/Shiboken objects collected while the interpreter shuts down have aborted
     the process on Linux / Python 3.11 after every test had passed ("Fatal Python
-    error: bool_dealloc", exit code 134; three CI runs so far).  The GUI fixtures
-    already delete their windows while the interpreter is healthy; this is the last
-    resort.  By the time this hook runs everything has been reported (terminal
-    summary, coverage, cache), so the remaining Qt objects are released, the streams
-    are flushed and the process ends with pytest's own exit status - the same idea
-    as ``pyqtgraph.exit()`` for applications.
+    error: bool_dealloc", exit code 134).  The GUI tests delete their windows while
+    the interpreter is healthy (``tests/qt_helpers.dispose_window``); by the time this
+    hook runs everything has been reported (terminal summary, coverage, cache), so
+    the streams are flushed and the process ends with pytest's own exit status - the
+    same idea as ``pyqtgraph.exit()`` for applications.
+
+    Qt objects are deliberately not touched here: forcing the deferred deletion of
+    the widgets left over at this point (panels and dialogs some tests create without
+    a parent) crashed the process now and then (exit 139).
     """
     if "PySide6.QtWidgets" not in sys.modules:
         return
-    from PySide6.QtWidgets import QApplication
-
-    app = QApplication.instance()
-    if app is not None:
-        for widget in app.topLevelWidgets():
-            widget.close()
-            widget.deleteLater()
-        app.processEvents()
-        gc.collect()
-        app.processEvents()
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(_EXIT_STATUS)

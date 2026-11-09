@@ -17,6 +17,7 @@ import pyqtgraph as pg  # noqa: E402
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from tests.qt_helpers import dispose_window  # noqa: E402
 from xps_autofit.core.fitting import ComponentSpec, build_parameters, fit_peaks  # noqa: E402
 from xps_autofit.gui.dialogs import PlotOptionsDialog  # noqa: E402
 from xps_autofit.gui.main_window import MainWindow  # noqa: E402
@@ -52,8 +53,7 @@ def window(app):
         win.settings_store.remove("ui/plot_options")
     else:
         win.settings_store.setValue("ui/plot_options", saved)
-    win.close()
-    win.deleteLater()
+    dispose_window(win)
 
 
 def _fitted(win, app, data_dir):
@@ -164,9 +164,7 @@ def test_plot_options_apply_and_persist(window, app, data_dir):
     # a new window picks the options up again
     other = MainWindow(synchronous_jobs=True)
     assert other.plot.options == options
-    other.close()
-    other.deleteLater()
-    app.processEvents()
+    dispose_window(other)
     # the dialog reproduces and resets them
     dlg = PlotOptionsDialog(options)
     assert dlg.values() == options
@@ -207,3 +205,64 @@ def test_settings_saved_as_recipe(window, app, data_dir, tmp_path):
     )
     assert plain.region("S 2p").max_components == 4
     assert np.isfinite(plain.photon_energy)
+
+
+def test_redraws_release_the_centre_lines(window, app, data_dir):
+    """Every redraw used to leak its draggable centre lines and their labels: the drag
+    callback was a lambda holding the line, a cycle through the C++ connection that
+    the garbage collector cannot see.  Leaked Qt graphics objects were later freed in
+    an arbitrary order."""
+    import gc
+
+    key = _fitted(window, app, data_dir)
+    result = window.session.state(key).result
+    for _ in range(3):
+        window.plot.show_result(result, "t")
+        app.processEvents()
+    gc.collect()
+    before = sum(isinstance(o, pg.InfiniteLine) for o in gc.get_objects())
+    for _ in range(15):
+        window.plot.show_result(result, "t")
+        app.processEvents()
+    gc.collect()
+    after = sum(isinstance(o, pg.InfiniteLine) for o in gc.get_objects())
+    assert after == before
+    # dragging still refits through the bound slot
+    label = result.majors()[0].label
+    line = window.plot._lines[label]
+    line.setValue(line.value() + 0.2)
+    line.sigPositionChangeFinished.emit(line)
+    app.processEvents()
+    assert window.session.state(key).status == "manual"
+
+
+def test_export_for_origin_from_the_app(window, app, data_dir, tmp_path):
+    from xps_autofit.export.origin import ORIGIN_COMPONENTS_SUFFIX
+
+    keys = window.load_files([str(data_dir / "p3ht_fresh_S2p.csv")])
+    window.select_key(keys[0])
+    # a spectrum without a fit: energy and intensity
+    raw = window.export_for_origin(tmp_path / "raw")
+    assert [p.name for p in raw] == ["raw.csv"]
+    assert raw[0].read_text(encoding="utf-8").splitlines()[1].startswith("eV,counts")
+    # the fit: curves and the component table, then opened (opener is stubbed)
+    key = _fitted(window, app, data_dir)
+    opened: list[Path] = []
+    files = window.export_for_origin(
+        tmp_path / "s2p_origin.csv",
+        open_after=True,
+        opener=lambda p: (opened.append(p), "default")[1],
+    )
+    assert [p.name for p in files] == ["s2p_origin.csv", f"s2p{ORIGIN_COMPONENTS_SUFFIX}"]
+    assert opened == [files[0]]
+    header = files[0].read_text(encoding="utf-8").splitlines()[0].split(",")
+    assert header[:2] == ["Binding Energy", "Raw"]
+    assert window.session.state(key).result.majors()[0].label.replace(",", ";") in header
+    assert "drag the file into Origin" in window.log_panel.toPlainText()
+    # the comparison view: X/Y pairs
+    window.tree.select_keys(list(window.session.order))
+    app.processEvents()
+    assert len(window._compare_keys) == 2
+    pairs = window.export_for_origin(tmp_path / "compare_origin.csv")
+    first = pairs[0].read_text(encoding="utf-8").splitlines()[0].split(",")
+    assert first[0] == "Binding Energy" and first[2] == "Binding Energy" and len(first) == 4

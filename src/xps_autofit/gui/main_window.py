@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import traceback
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +42,16 @@ from ..core.preprocessing import C1S_REFERENCE_WARNING
 from ..core.quantification import QuantCorrection
 from ..core.region import CandidateLine
 from ..core.uncertainty import BootstrapResult, bootstrap
+from ..export.origin import (
+    ORIGIN_COMPONENTS_SUFFIX,
+    ORIGIN_SUFFIX,
+    component_columns,
+    fit_columns,
+    open_in_origin,
+    overlay_columns,
+    spectrum_columns,
+    write_origin_csv,
+)
 from ..readers import supported_extensions
 from ..recipes import Recipe, builtin_recipe_names, load_recipe, save_recipe
 from ..update_check import (
@@ -51,6 +61,7 @@ from ..update_check import (
     check_for_update,
     disabled_by_environment,
 )
+from .compat import pyside_refcount_warning
 from .dialogs import BatchDialog, ExportDialog, PlotOptionsDialog, TableDialog
 from .panels import (
     ComponentsTable,
@@ -224,6 +235,9 @@ class MainWindow(QMainWindow):
         self.log(
             f"XPS AutoFit Studio {__version__} ready. Formats: {', '.join(supported_extensions())}"
         )
+        warning = pyside_refcount_warning()
+        if warning:
+            self.log(f"WARNING: {warning}")
         if auto_update_check is None:
             auto_update_check = not synchronous_jobs
         if auto_update_check and self.update_check_due():
@@ -320,6 +334,13 @@ class MainWindow(QMainWindow):
         self.act_reset_view = QAction("Reset view", self)
         self.act_reset_view.setShortcut("Home")
         self.act_reset_view.triggered.connect(self.plot.reset_view)
+        self.act_export_origin = QAction("Export for Origin…", self)
+        self.act_export_origin.setShortcut("Ctrl+Alt+E")
+        self.act_export_origin.setToolTip(
+            "CSV with Origin's Long Name / Units / Comments rows (fit curves and components, "
+            "or the spectra of the comparison view); opened in Origin when it is installed"
+        )
+        self.act_export_origin.triggered.connect(self.export_origin_dialog)
         self.act_save_plot = QAction("Save plot image…", self)
         self.act_save_plot.setShortcut("Ctrl+Shift+S")
         self.act_save_plot.triggered.connect(self.save_plot_dialog)
@@ -388,6 +409,7 @@ class MainWindow(QMainWindow):
         m_file.addAction(self.act_remove_spectrum)
         m_file.addSeparator()
         m_file.addAction(self.act_export)
+        m_file.addAction(self.act_export_origin)
         m_file.addAction(self.act_save_plot)
         m_file.addSeparator()
         quit_action = QAction("Quit", self)
@@ -643,7 +665,9 @@ class MainWindow(QMainWindow):
             "close the program.",
         )
         if answer == QMessageBox.StandardButton.Yes and self._self_updater().apply_now(True):
-            QTimer.singleShot(50, QApplication.instance().quit)
+            app = QApplication.instance()
+            if app is not None:
+                QTimer.singleShot(50, app.quit)
 
     def update_check_due(self) -> bool:
         """Startup check wanted, not disabled by the environment, and not done recently."""
@@ -1850,6 +1874,76 @@ class MainWindow(QMainWindow):
             self.lamp.set_state(state.status if state else "ok")
 
         return self.runner.start(job, done, self._error, label="export")
+
+    # ------------------------------------------------------------------ Origin
+    def export_origin_dialog(self) -> None:
+        cur = self.current()
+        if cur is None and not self._compare_keys:
+            self.log("select a spectrum (or several for the comparison view) first")
+            return
+        stem = (
+            "comparison"
+            if self._compare_keys
+            else re.sub(r"[^A-Za-z0-9._-]+", "_", cur[1].path.stem if cur else "spectrum")
+        )
+        default = Path(str(self.settings_store.value("export_dir", str(Path.home()))))
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export for Origin", str(default / f"{stem}{ORIGIN_SUFFIX}"), "CSV (*.csv)"
+        )
+        if path:
+            self.export_for_origin(path, open_after=True)
+
+    def export_for_origin(
+        self,
+        path: str | Path,
+        open_after: bool = False,
+        opener: Callable[[Path], str] | None = None,
+    ) -> list[Path]:
+        """Write what is on screen as CSV that Origin opens as a labelled workbook.
+
+        The fit: binding energy, raw, background, envelope, components (on the
+        background) and residual, plus ``…_components.csv`` with the parameter
+        table.  The comparison view: X/Y pairs per spectrum.  A spectrum without a
+        fit: energy and intensity.  With ``open_after`` the curves file is opened in
+        Origin when it is installed (else in the default program).
+        """
+        p = Path(path)
+        if not p.name.lower().endswith(".csv"):
+            p = p.with_name(p.name + ".csv")
+        written: list[Path] = []
+        if self._compare_keys:
+            entries = [
+                (self.session.items[k].display_name, self.session.items[k].spectrum)
+                for k in self._compare_keys
+                if k in self.session.items
+            ]
+            written.append(write_origin_csv(p, overlay_columns(entries)))
+        else:
+            cur = self.current()
+            if cur is None:
+                self.log("select a spectrum first")
+                return []
+            key, item = cur
+            state = self.session.results.get(key)
+            if state is not None and state.result is not None:
+                written.append(write_origin_csv(p, fit_columns(state.result)))
+                stem = p.name[: -len(ORIGIN_SUFFIX)] if p.name.endswith(ORIGIN_SUFFIX) else p.stem
+                table = p.with_name(f"{stem}{ORIGIN_COMPONENTS_SUFFIX}")
+                written.append(write_origin_csv(table, component_columns(state.result)))
+            else:
+                written.append(write_origin_csv(p, spectrum_columns(item.spectrum)))
+        self.settings_store.setValue("export_dir", str(p.parent))
+        for w in written:
+            self.log(f"Origin file: {w}")
+        if open_after and written:
+            how = (opener or open_in_origin)(written[0])
+            self.log(
+                "opened in Origin"
+                if how == "origin"
+                else "Origin was not found (Windows only; set XPS_AUTOFIT_ORIGIN to its "
+                "path); opened with the default program - drag the file into Origin"
+            )
+        return written
 
     def batch_dialog(self) -> None:
         default = Path(str(self.settings_store.value("last_dir", str(Path.home()))))

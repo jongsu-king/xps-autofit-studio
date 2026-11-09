@@ -42,7 +42,14 @@ dev = [
   "types-PyYAML",
   "pandas-stubs",
 ]
-gui = ["PySide6>=6.6", "pyqtgraph>=0.13"]
+gui = [
+  # PySide6 6.12.0 on Linux decrements the reference count of None on every event it
+  # dispatches to Python; Python 3.11 aborts ("none_dealloc") once it reaches zero.
+  # 3.12+ makes None immortal, macOS and Windows builds are not affected.
+  "PySide6>=6.6,<6.12; sys_platform == 'linux' and python_version < '3.12'",
+  "PySide6>=6.6; sys_platform != 'linux' or python_version >= '3.12'",
+  "pyqtgraph>=0.13",
+]
 
 [project.scripts]
 xps-autofit = "xps_autofit.cli:main"

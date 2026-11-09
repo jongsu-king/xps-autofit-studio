@@ -14,6 +14,7 @@ pytest.importorskip("pyqtgraph")
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from tests.qt_helpers import dispose_window  # noqa: E402
 from xps_autofit.export.plots import SERIES as FIGURE_SERIES  # noqa: E402
 from xps_autofit.gui import theme  # noqa: E402
 from xps_autofit.gui.main_window import MainWindow  # noqa: E402
@@ -60,8 +61,7 @@ def window(app):
         else:
             win.settings_store.setValue(key, value)
     apply_theme(app)
-    win.close()
-    win.deleteLater()
+    dispose_window(win)
 
 
 def _fitted(win, app, data_dir):
@@ -178,9 +178,7 @@ def test_persisted_theme_is_applied_at_construction(app):
         assert win.plot.view.backgroundBrush().color().name() == LIGHT.plot_bg
         assert win.theme_actions["light"].isChecked()
         assert win.plot_style_actions["instrument"].isChecked()
-        win.close()
-        win.deleteLater()
-        app.processEvents()
+        dispose_window(win)
     finally:
         for key, value in (("ui/theme", saved_theme), ("ui/plot_style", saved_style)):
             if value is None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import os
 from pathlib import Path
 
@@ -14,6 +13,7 @@ pytest.importorskip("pyqtgraph")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from tests.qt_helpers import dispose_window  # noqa: E402
 from xps_autofit.gui.main_window import MainWindow  # noqa: E402
 from xps_autofit.gui.theme import apply_theme  # noqa: E402
 from xps_autofit.gui.workers import JobRunner  # noqa: E402
@@ -43,11 +43,7 @@ def window(app):
     # Release the Qt objects while the interpreter is healthy: windows that survive
     # until interpreter exit are freed in an arbitrary order and can abort the process
     # after the tests have passed.
-    win.close()
-    win.deleteLater()
-    app.processEvents()
-    del win
-    gc.collect()
+    dispose_window(win)
     app.processEvents()
 
 

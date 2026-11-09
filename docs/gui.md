@@ -63,6 +63,13 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
 6. **EXPORT** (Ctrl+E) writes the same files as the command line for the current
    spectrum (CSV, XLSX, JSON project, PNG/SVG/PDF in the Origin-style publication
    look, optional bootstrap);
+   **Export for Origin…** (Ctrl+Alt+E) writes what is on screen as CSV that
+   OriginLab Origin opens as a labelled workbook (Long Name, Units and Comments
+   rows): the fit curves and the component table, the X/Y pairs of the comparison
+   view, or the bare spectrum. On Windows the file is opened in Origin at once when
+   the program is found (`Program Files\OriginLab`, or the path in the
+   `XPS_AUTOFIT_ORIGIN` environment variable); otherwise it opens in the default
+   program and can be dragged into Origin.
    **Save plot image…** (Ctrl+Shift+S) saves the live view as PNG; **Copy table**
    (Ctrl+Shift+C, or Ctrl+C inside a table) puts the current table on the clipboard
    as tab-separated text for a spreadsheet.

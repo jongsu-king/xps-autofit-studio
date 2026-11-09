@@ -354,6 +354,12 @@ def write_region_outputs(
             },
         )
         outputs["xlsx"] = str(p)
+    if "origin" in fmts:
+        from ..export.origin import write_fit_for_origin
+
+        written = write_fit_for_origin(base, result)
+        outputs["origin"] = str(written["curves"])
+        outputs["origin_components"] = str(written["components"])
     title = f"{spectrum.name} - {sel.region.name} (n={best.n_components}, {sel.status})"
     for fmt in ("png", "svg", "pdf"):
         if fmt in fmts:

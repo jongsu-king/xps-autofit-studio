@@ -30,7 +30,10 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--recipe", "-r", help="built-in recipe name or path to a YAML recipe")
     p.add_argument("--output", "-o", default="xps_autofit_results", help="output directory")
     p.add_argument(
-        "--formats", default="csv,json,png", help="comma list of csv,xlsx,json,png,svg,pdf"
+        "--formats",
+        default="csv,json,png",
+        help="comma list of csv,xlsx,json,png,svg,pdf,origin (origin: CSV that Origin opens "
+        "as a labelled workbook)",
     )
     p.add_argument("--region", action="append", help="only these recipe regions (repeatable)")
     p.add_argument(

@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added - Origin
+- **Files OriginLab Origin opens as a labelled workbook** (`export/origin.py`):
+  CSV with Origin's three label rows (Long Name, Units, Comments) above the data,
+  the binding energy as the first (X) column. Fits give `_origin.csv` (raw,
+  background, envelope, each component on the background, residual; component
+  centres, widths, areas and fractions in the Comments row) and
+  `_origin_components.csv` (the parameter table). `--formats origin` in `fit` and
+  `batch`, *origin* in the EXPORT dialog, and **File > Export for Origin…**
+  (Ctrl+Alt+E) in the app, which also writes the X/Y pairs of the comparison view
+  or a bare spectrum and opens the file in Origin when the program is found
+  (Windows, `Program Files\OriginLab`, or `XPS_AUTOFIT_ORIGIN`), else in the
+  default program.
+
 ### Added - installers and updates
 - **Automatic installation of updates** for installed copies (*Help > Install
   updates automatically*, on by default): a newer release is downloaded in the
@@ -19,11 +32,6 @@ All notable changes to this project are documented here. The format follows
 - The release notes get a generated download table (platform, size, SHA-256, how to
   install) after the installers are attached.
 - The Windows installer removes the previous `_internal` folder before an upgrade.
-
-### Fixed
-- The update check of the macOS (and some Linux) installer builds could not verify
-  GitHub's certificate - the bundled OpenSSL has no CA store there - and reported
-  "GitHub not reachable". Requests now fall back to certifi or the system CA bundle.
 
 ### Added - engine and command line
 - **Origin-style figures**: the PNG/SVG/PDF figures of `fit`, `batch` and the
@@ -41,6 +49,19 @@ All notable changes to this project are documented here. The format follows
   loads like any recipe.
 
 ### Added - desktop application
+- **Light theme** next to the dark instrument theme (*View > Theme*, remembered
+  between sessions). Both themes share one stylesheet template and the figures'
+  validated palette: dark-surface series colours in the dark theme, light-surface
+  ones in the light theme.
+- **Origin-style plot** (*View > Plot style*, the default): a publication look in
+  the manner of OriginLab graphs: white canvas, black frame on all four sides,
+  inward ticks, Arial tick and axis labels, no grid, open black data symbols, red
+  envelope, grey dashed background, filled components, a boxed legend. The
+  *Instrument* style follows the theme as before (dark or light canvas, grid).
+  Switching style or theme redraws the current fit, keeps the draggable centre
+  lines, element marks and a renamed title; the setting is remembered. The legend
+  is now compact at the top of its column instead of stretched over the plot
+  height.
 - **Session files** (*File > Save session… / Open session…*, `.xpsession`): the
   open files, titles, charge shifts, recipe and every fit (as project content) are
   written out and restored in a fresh window; fits are rebuilt from their stored
@@ -59,6 +80,9 @@ All notable changes to this project are documented here. The format follows
   candidate states and a fixed component count; selected in the Recipe box.
 
 ### Fixed
+- The update check of the macOS (and some Linux) installer builds could not verify
+  GitHub's certificate - the bundled OpenSSL has no CA store there - and reported
+  "GitHub not reachable". Requests now fall back to certifi or the system CA bundle.
 - Session files carry a `kind` marker: an exported project JSON (same integer
   format) is now rejected with a clear message instead of restoring nothing.
 - Opening a session no longer replaces fits that are already open (and their undo
@@ -71,20 +95,21 @@ All notable changes to this project are documented here. The format follows
 - A manual result without an automatic fit behind it is now reported as unsaved
   by *Save session*; `--elements` ignores empty names; a theme change no longer
   redraws an Origin-style plot; the tree is rebuilt once after a session restore.
-- **Light theme** next to the dark instrument theme (*View > Theme*, remembered
-  between sessions). Both themes share one stylesheet template and the figures'
-  validated palette: dark-surface series colours in the dark theme, light-surface
-  ones in the light theme.
-- **Origin-style plot** (*View > Plot style*, the default): a publication look in
-  the manner of OriginLab graphs: white canvas, black frame on all four sides,
-  inward ticks, Arial tick and axis labels, no grid, open black data symbols, red
-  envelope, grey dashed background, filled components, a boxed legend. The
-  *Instrument* style follows the theme as before (dark or light canvas, grid).
-  Switching style or theme redraws the current fit, keeps the draggable centre
-  lines, element marks and a renamed title; the setting is remembered. The legend
-  is now compact at the top of its column instead of stretched over the plot
-  height.
-
+- **Linux / Python 3.11 abort** (CI exit 134, "Fatal Python error: none_dealloc"):
+  the Linux build of PySide6 6.12.0 lowers the reference count of `None` on every
+  event it dispatches to Python, and Python 3.11 aborts once it reaches zero, after
+  a few hundred redraws in the app as well. PySide6 6.9.3-6.11.3 and the macOS /
+  Windows builds of 6.12.0 are clean and Python 3.12+ makes `None` immortal; the
+  `gui` extra now requires `PySide6<6.12` on Linux with Python < 3.12, and the app
+  logs a warning when it finds that combination anyway.
+- Every redraw of a fit leaked its draggable centre lines and their labels (the
+  drag callback was a lambda holding the line, a cycle through the Qt connection
+  that the garbage collector cannot see); they are now released.
+- Colours reach pyqtgraph as `QColor` / `QBrush` instead of tuples, which sent
+  every redraw through `numpy.dtype(tuple)` (a reference leak in numpy 2.2-2.4).
+- GUI tests now really delete their windows (`deleteLater()` needs an event loop;
+  deferred deletions are now sent explicitly), so a closed window no longer stays
+  alive with all its widgets for the rest of the session.
 - GUI tests no longer create a `MainWindow` only to drop it: the cyclic garbage
   collector deleted its Qt objects at an arbitrary later moment, which aborted the
   Linux / Python 3.11 CI job in the middle of the run (exit 134 after 172 tests).
@@ -92,7 +117,7 @@ All notable changes to this project are documented here. The format follows
   needs the dependencies its build job does not install; it now reads the
   version from the source file and also checks the built wheel's name.
 
-### Added
+### Added - project
 - Zenodo DOI badge and `doi` / `identifiers` in `CITATION.cff` (concept DOI
   10.5281/zenodo.24071088; 0.5.0: 10.5281/zenodo.24071089).
 

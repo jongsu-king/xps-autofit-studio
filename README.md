@@ -74,7 +74,7 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Uncertainties** | Covariance errors; Poisson or residual bootstrap of areas, centres, widths, fractions, propagated to atomic percentages |
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction; `suggest` turns the result into a recipe (regions around the measured lines, database doublets, Scofield RSFs, C 1s charge reference) |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu |
-| **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), per-run summaries; `verify` reproduces a project |
+| **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), CSV that OriginLab Origin opens as a labelled workbook (`--formats origin`, *Export for Origin* in the app, opened in Origin when it is installed), per-run summaries; `verify` reproduces a project |
 | **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), fixable centres and widths per component, plot options (title, labels, fonts, ranges), "save settings as recipe", bootstrap, batch, export, element identification with recipe suggestion, session files, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
@@ -100,6 +100,10 @@ newer release exists (once a day, can be turned off).
 pip install xps-autofit            # engine + command line
 pip install "xps-autofit[gui]"     # plus the desktop application (PySide6, PyQtGraph)
 ```
+
+On Linux with Python 3.11 the `gui` extra installs PySide6 6.11: the Linux build of
+PySide6 6.12.0 corrupts the reference count of `None` and Python 3.11 aborts after a
+few hundred redraws (Python 3.12+ and macOS / Windows are not affected).
 
 **From a clone** (development):
 
@@ -273,6 +277,11 @@ For each file and region (`<file>__<region>`):
 - `.json` - project file: data, settings, initial values, parameters, mask,
   correlations, grade, versions
 - `.xlsx` - the same tables in one workbook
+- `_origin.csv` / `_origin_components.csv` (`--formats origin`) - the fit curves
+  (binding energy as X, raw, background, envelope, each component on the
+  background, residual) and the component table with Origin's three label rows
+  (Long Name, Units, Comments): drop the file onto OriginLab Origin, or open it
+  there, and the workbook comes up with named columns and units, ready to plot
 
 Per run: `summary_regions.csv` (with `grade`, `quality_score`, `durbin_watson`,
 `max_correlation`), `summary_components.csv`, `summary_quantification.csv` (and
@@ -337,6 +346,9 @@ software. Readers for additional formats can be registered with
   charged sample, command line) and session files (titles, shifts, fits, recipe
   restored in a fresh window; missing files tolerated; project files rejected;
   open fits kept)
+- Origin export (label rows, column order, values, component table, comparison
+  pairs, batch format, finding Origin under Program Files, opening the file) and
+  redraws that release their plot items
 - parameter locks (fixed widths and centres survive a refit and a drag), plot
   options (labels, fonts, legend, fills, ranges, persistence, dialog round trip)
   and recipes saved from the settings panel (with the fitted components as
@@ -345,7 +357,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (215 tests, about eight minutes). Comparisons with real instrument
+Run `pytest` to execute them (239 tests, about eight minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 

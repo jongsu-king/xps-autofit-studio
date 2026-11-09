@@ -15,14 +15,28 @@ from typing import Any
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from ..core.fitting import FitResult
 from ..core.spectrum import Spectrum
-from .theme import PlotStyle, plot_style, rgba
+from .theme import RGBA, PlotStyle, plot_style, rgba
 
 _AXES = ("left", "bottom", "top", "right")
+
+
+def _qcolor(color: RGBA) -> QColor:
+    """Colours go to pyqtgraph as QColor / QBrush, never as tuples.
+
+    ``pyqtgraph.mkColor`` sends a tuple through ``numpy.issubdtype(tuple, ...)``, and
+    ``numpy.dtype(tuple)`` (numpy 2.2-2.4) leaks a reference to ``None`` on every
+    call; redraws do that thousands of times.  A QColor takes the early exit.
+    """
+    return QColor(*color)
+
+
+def _brush(color: RGBA) -> QBrush:
+    return QBrush(_qcolor(color))
 
 
 @dataclass(frozen=True)
@@ -216,7 +230,7 @@ class SpectrumPlot(QWidget):
             self._set_label(which, axis, text)
         self.legend.setLabelTextColor(s.text)
         self.legend.setPen(pg.mkPen(s.legend_pen) if s.legend_pen else pg.mkPen(None))
-        self.legend.setBrush(pg.mkBrush(*s.legend_fill))
+        self.legend.setBrush(_brush(s.legend_fill))
         self.legend.setVisible(self.options.show_legend)
         self.view.ci.layout.setColumnFixedWidth(1, 200 if self.options.show_legend else 0)
         for item in (self._cross_main, self._cross_resid):
@@ -244,7 +258,15 @@ class SpectrumPlot(QWidget):
         return self._eff.series[index % len(self._eff.series)]
 
     # ------------------------------------------------------------------ helpers
+    def _line_released(self, line: pg.InfiniteLine) -> None:
+        label = getattr(line, "xps_component", None)
+        if label is not None:
+            self.centerDragged.emit(str(label), float(line.value()))
+
     def _reset(self) -> None:
+        for line in self._lines.values():
+            with contextlib.suppress(RuntimeError, TypeError):  # already disconnected
+                line.sigPositionChangeFinished.disconnect(self._line_released)
         self.main.clear()
         self.resid.clear()
         self.legend.clear()
@@ -387,9 +409,7 @@ class SpectrumPlot(QWidget):
                 continue
             curve = self.main.plot(x, y, pen=pg.mkPen(color, width=1.5), name=comp.label)
             if self.options.show_fills:
-                fill = pg.FillBetweenItem(
-                    bg_curve, curve, brush=pg.mkBrush(*rgba(color, s.fill_alpha))
-                )
+                fill = pg.FillBetweenItem(bg_curve, curve, brush=_brush(rgba(color, s.fill_alpha)))
                 self.main.addItem(fill)
             if draggable:
                 line = pg.InfiniteLine(
@@ -406,7 +426,7 @@ class SpectrumPlot(QWidget):
                     labelOpts={
                         "position": 0.95 - 0.08 * (slot[comp.parent] % 5),
                         "color": color,
-                        "fill": s.label_fill,
+                        "fill": _qcolor(s.label_fill),
                         # The x axis is inverted (binding energy): swap the default
                         # anchors so the label still sits on the side facing the
                         # centre of the view instead of running off the edge.
@@ -414,9 +434,11 @@ class SpectrumPlot(QWidget):
                     },
                 )
                 line.setBounds((float(x[0]), float(x[-1])))
-                line.sigPositionChangeFinished.connect(
-                    lambda ln=line, lab=comp.parent: self.centerDragged.emit(lab, float(ln.value()))
-                )
+                # A bound method, not a lambda holding the line: the lambda made a
+                # cycle through the C++ connection that the garbage collector cannot
+                # see, so every redraw leaked its centre lines and their labels.
+                line.xps_component = comp.parent
+                line.sigPositionChangeFinished.connect(self._line_released)
                 self.main.addItem(line)
                 self._lines[comp.parent] = line
         self.main.plot(
@@ -426,7 +448,7 @@ class SpectrumPlot(QWidget):
         if result.sigma is not None:
             upper = self.resid.plot(x, result.sigma, pen=None)
             lower = self.resid.plot(x, -result.sigma, pen=None)
-            self.resid.addItem(pg.FillBetweenItem(lower, upper, brush=pg.mkBrush(*s.sigma_fill)))
+            self.resid.addItem(pg.FillBetweenItem(lower, upper, brush=_brush(s.sigma_fill)))
         self.resid.addLine(y=0, pen=pg.mkPen(s.background, width=0.8))
         self.resid.plot(x, result.residual, pen=pg.mkPen(s.residual, width=1))
         self.set_title(title)
@@ -477,7 +499,7 @@ class SpectrumPlot(QWidget):
                 labelOpts={
                     "position": 0.92 - 0.06 * (i % 8),
                     "color": pen_color,
-                    "fill": self._eff.label_fill,
+                    "fill": _qcolor(self._eff.label_fill),
                     "anchors": [(1, 0.5), (0, 0.5)],
                 },
             )

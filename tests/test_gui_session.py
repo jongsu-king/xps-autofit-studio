@@ -15,6 +15,7 @@ pytest.importorskip("pyqtgraph")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from tests.qt_helpers import dispose_window  # noqa: E402
 from xps_autofit.gui.main_window import MainWindow  # noqa: E402
 from xps_autofit.gui.session_file import SESSION_FORMAT, restore_session, save_session  # noqa: E402
 from xps_autofit.gui.theme import apply_theme  # noqa: E402
@@ -70,9 +71,7 @@ def test_session_round_trip(app, data_dir, tmp_path):
         assert data["spectra"][2]["shift_eV"] == pytest.approx(0.4)
         assert "result" in data["spectra"][0] and "result" not in data["spectra"][2]
     finally:
-        win.close()
-        win.deleteLater()
-        app.processEvents()
+        dispose_window(win)
 
     fresh = _window(app)
     try:
@@ -98,9 +97,7 @@ def test_session_round_trip(app, data_dir, tmp_path):
         text = fresh.log_panel.toPlainText()
         assert "3 spectra, 2 fits restored" in text
     finally:
-        fresh.close()
-        fresh.deleteLater()
-        app.processEvents()
+        dispose_window(fresh)
 
 
 def test_session_restore_tolerates_missing_files_and_bad_input(app, data_dir, tmp_path):
@@ -117,9 +114,7 @@ def test_session_restore_tolerates_missing_files_and_bad_input(app, data_dir, tm
         data["spectra"].append(dict(data["spectra"][0], index=7))  # no such spectrum in the file
         (tmp_path / "edited.xpsession").write_text(json.dumps(data), encoding="utf-8")
     finally:
-        win.close()
-        win.deleteLater()
-        app.processEvents()
+        dispose_window(win)
 
     fresh = _window(app)
     try:
@@ -173,6 +168,4 @@ def test_session_restore_tolerates_missing_files_and_bad_input(app, data_dir, tm
         assert "cannot load recipe" in fresh.log_panel.toPlainText()
         assert fresh.settings.recipe_combo.currentIndex() == 0
     finally:
-        fresh.close()
-        fresh.deleteLater()
-        app.processEvents()
+        dispose_window(fresh)
