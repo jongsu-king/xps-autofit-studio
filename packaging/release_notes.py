@@ -16,26 +16,58 @@ import re
 from pathlib import Path
 
 PLATFORMS = [  # (test on the lower-case file name, platform, what it is, how to install)
-    (r"windows.*setup\.exe$", "Windows 10/11 (64-bit)", "Installer",
-     "Run it; no administrator rights needed (installs for the current user)."),
-    (r"windows.*(portable)?\.zip$|windows\.exe$", "Windows 10/11 (64-bit)", "Portable",
-     "Unzip anywhere and run the program inside; nothing is installed."),
-    (r"macos.*(arm64|aarch64).*\.dmg$", "macOS 11+ · Apple silicon (M1–M4)", "Disk image",
-     "Open, drag the app to Applications."),
-    (r"macos.*(x86_64|intel|x64).*\.dmg$", "macOS 11+ · Intel", "Disk image",
-     "Open, drag the app to Applications."),
+    (
+        r"windows.*setup\.exe$",
+        "Windows 10/11 (64-bit)",
+        "Installer",
+        "Run it; no administrator rights needed (installs for the current user).",
+    ),
+    (
+        r"windows.*(portable)?\.zip$|windows\.exe$",
+        "Windows 10/11 (64-bit)",
+        "Portable",
+        "Unzip anywhere and run the program inside; nothing is installed.",
+    ),
+    (
+        r"macos.*(arm64|aarch64).*\.dmg$",
+        "macOS 11+ · Apple silicon (M1–M4)",
+        "Disk image",
+        "Open, drag the app to Applications.",
+    ),
+    (
+        r"macos.*(x86_64|intel|x64).*\.dmg$",
+        "macOS 11+ · Intel",
+        "Disk image",
+        "Open, drag the app to Applications.",
+    ),
     (r"macos.*\.dmg$", "macOS", "Disk image", "Open, drag the app to Applications."),
-    (r"macos.*(arm64|aarch64).*\.tar\.gz$", "macOS 11+ · Apple silicon (M1–M4)", "Archive",
-     "Unpack, then `./install.sh` (current user) or run in place."),
-    (r"macos.*(x86_64|intel|x64).*\.tar\.gz$", "macOS 11+ · Intel", "Archive",
-     "Unpack, then `./install.sh` (current user) or run in place."),
-    (r"_amd64\.deb$", "Ubuntu/Debian (x86-64)", "Package",
-     "`sudo apt install ./<file>`"),
-    (r"linux.*\.tar\.gz$", "Linux (x86-64, glibc 2.35+)", "Archive",
-     "Unpack, then `./install.sh` (current user) or run in place."),
+    (
+        r"macos.*(arm64|aarch64).*\.tar\.gz$",
+        "macOS 11+ · Apple silicon (M1–M4)",
+        "Archive",
+        "Unpack, then `./install.sh` (current user) or run in place.",
+    ),
+    (
+        r"macos.*(x86_64|intel|x64).*\.tar\.gz$",
+        "macOS 11+ · Intel",
+        "Archive",
+        "Unpack, then `./install.sh` (current user) or run in place.",
+    ),
+    (r"_amd64\.deb$", "Ubuntu/Debian (x86-64)", "Package", "`sudo apt install ./<file>`"),
+    (
+        r"linux.*\.tar\.gz$",
+        "Linux (x86-64, glibc 2.35+)",
+        "Archive",
+        "Unpack, then `./install.sh` (current user) or run in place.",
+    ),
     (r"\.whl$", "Any (Python)", "Wheel", "`pip install <file>`"),
     (r"\.tar\.gz$", "Any (Python)", "Source", "`pip install <file>`"),
-    (r"\.ipa$", "iPhone/iPad (sideload)", "Unsigned app", "Sign and install with AltStore/Sideloadly/Xcode."),
+    (
+        r"\.ipa$",
+        "iPhone/iPad (sideload)",
+        "Unsigned app",
+        "Sign and install with AltStore/Sideloadly/Xcode.",
+    ),
     (r"\.zip$", "Any", "Archive", "Unpack."),
 ]
 
@@ -72,8 +104,11 @@ def main() -> int:
     ap.add_argument("--name", required=True)
     ap.add_argument("--notes", type=Path)
     ap.add_argument("--no-update-section", action="store_true")
-    ap.add_argument("--menu", default="Help → Automatic updates",
-                    help="where the update setting is in the program")
+    ap.add_argument(
+        "--menu",
+        default="Help → Automatic updates",
+        help="where the update setting is in the program",
+    )
     args = ap.parse_args()
 
     files = sorted(p for p in args.dir.iterdir() if p.is_file() and p.name != "SHA256SUMS.txt")
@@ -90,32 +125,44 @@ def main() -> int:
     out.append("|---|---|---|---:|---|")
     for p in rows:
         _, platform, kind, how = classify(p.name)
-        out.append(f"| {platform} | {kind} | [`{p.name}`]({base}/{p.name}) | {human(p.stat().st_size)} | {how} |")
+        link = f"[`{p.name}`]({base}/{p.name})"
+        out.append(f"| {platform} | {kind} | {link} | {human(p.stat().st_size)} | {how} |")
     out.append("")
     out.append("<details><summary>SHA-256 checksums</summary>\n")
     out.append("```")
     out.extend(f"{sums[p.name]}  {p.name}" for p in rows)
     out.append("```")
     out.append("")
-    out.append("Check a download: `shasum -a 256 <file>` (macOS), `sha256sum <file>` (Linux), "
-               "`Get-FileHash <file>` (Windows PowerShell). The same list is attached as "
-               "`SHA256SUMS.txt`.\n</details>\n")
+    out.append(
+        "Check a download: `shasum -a 256 <file>` (macOS), `sha256sum <file>` (Linux), "
+        "`Get-FileHash <file>` (Windows PowerShell). The same list is attached as "
+        "`SHA256SUMS.txt`.\n</details>\n"
+    )
     out.append("### First start on an unsigned build\n")
     out.append("These builds are not code-signed, so the operating system asks once:\n")
-    out.append("- **Windows** - SmartScreen *Windows protected your PC*: **More info → Run anyway**.")
-    out.append("- **macOS** - *cannot be opened because Apple cannot check it*: open **System Settings → "
-               "Privacy & Security** and click **Open Anyway** (or run "
-               "`xattr -dr com.apple.quarantine \"/Applications/<App>.app\"`).")
-    out.append("- **Linux** - no prompt; the `.deb` adds a menu entry, `install.sh` adds one for the current user.\n")
+    out.append(
+        "- **Windows** - SmartScreen *Windows protected your PC*: **More info → Run anyway**."
+    )
+    out.append(
+        "- **macOS** - *cannot be opened because Apple cannot check it*: open **System Settings → "
+        "Privacy & Security** and click **Open Anyway** (or run "
+        '`xattr -dr com.apple.quarantine "/Applications/<App>.app"`).'
+    )
+    out.append(
+        "- **Linux** - no prompt; the `.deb` adds a menu entry, `install.sh` adds one for "
+        "the current user.\n"
+    )
     if not args.no_update_section:
         out.append("### Automatic updates\n")
-        out.append("The installed program checks this page at most once a day (one anonymous request to "
-                   "the GitHub API; nothing but the program name and version is sent). When a newer "
-                   "release appears it downloads the file for your system, verifies it against "
-                   "`SHA256SUMS.txt`, and installs it when you close the program (or at once if you "
-                   f"choose *Restart now*). **{args.menu}** switches between *download and "
-                   "install*, *only tell me*, and *off*. Copies installed with pip or run from source "
-                   "are never changed; they show the command to update instead.\n")
+        out.append(
+            "The installed program checks this page at most once a day (one anonymous request to "
+            "the GitHub API; nothing but the program name and version is sent). When a newer "
+            "release appears it downloads the file for your system, verifies it against "
+            "`SHA256SUMS.txt`, and installs it when you close the program (or at once if you "
+            f"choose *Restart now*). **{args.menu}** switches between *download and "
+            "install*, *only tell me*, and *off*. Copies installed with pip or run from source "
+            "are never changed; they show the command to update instead.\n"
+        )
     print("\n".join(out))
     return 0
 
