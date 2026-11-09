@@ -208,6 +208,11 @@ def build_parser() -> argparse.ArgumentParser:
     pu = sub.add_parser("update-check", help="compare this version with the latest release")
     pu.add_argument("--json", action="store_true")
     pu.add_argument("--timeout", type=float, default=6.0)
+    pu.add_argument(
+        "--install",
+        action="store_true",
+        help="installed copies: download the newer release, verify it (SHA-256) and install it",
+    )
 
     sub.add_parser("gui", help="start the desktop application")
     return p
@@ -526,6 +531,20 @@ def cmd_update_check(args: argparse.Namespace) -> int:
     import json
 
     from .update_check import UpdateCheckError, check_for_update, describe
+
+    if args.install:
+        from . import selfupdate
+
+        updater = selfupdate.Updater(
+            selfupdate.App(
+                repo="jongsu-king/xps-autofit-studio",
+                name="XPS AutoFit Studio",
+                version=__version__,
+                env_prefix="XPS_AUTOFIT",
+                pip_name="xps-autofit",
+            )
+        )
+        return selfupdate.cli(updater)
 
     try:
         info = check_for_update(timeout=args.timeout)

@@ -98,6 +98,24 @@ class UpdateCheckThread(QThread):
         self.done.emit(info)
 
 
+class UpdateInstallThread(QThread):
+    """Downloads, verifies (SHA-256) and unpacks a release off the GUI thread."""
+
+    done = Signal(object)
+
+    def __init__(self, updater: Any, release: Any, parent: Any = None) -> None:
+        super().__init__(parent)
+        self._updater = updater
+        self._release = release
+
+    def run(self) -> None:
+        try:
+            result: object = self._updater.prepare(self._release)
+        except Exception as exc:  # reported in the GUI
+            result = exc
+        self.done.emit(result)
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self, synchronous_jobs: bool = False, auto_update_check: bool | None = None
@@ -455,6 +473,17 @@ class MainWindow(QMainWindow):
             lambda on: self.settings_store.setValue("update_check/enabled", bool(on))
         )
         m_help.addAction(self.act_auto_updates)
+        self.act_auto_install = QAction("Install updates automatically", self)
+        self.act_auto_install.setCheckable(True)
+        self.act_auto_install.setChecked(self.auto_install_enabled())
+        self.act_auto_install.setToolTip(
+            "Installed copies: download a newer release in the background, verify it against "
+            "SHA256SUMS.txt and install it when the program closes"
+        )
+        self.act_auto_install.toggled.connect(
+            lambda on: self.settings_store.setValue("update_check/auto_install", bool(on))
+        )
+        m_help.addAction(self.act_auto_install)
         releases = QAction("Release notes and installers", self)
         releases.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(RELEASES_URL)))
         m_help.addAction(releases)
@@ -531,6 +560,91 @@ class MainWindow(QMainWindow):
             return raw.lower() not in ("false", "0", "")
         return bool(raw)
 
+    def auto_install_enabled(self) -> bool:
+        raw = self.settings_store.value("update_check/auto_install", True)
+        if isinstance(raw, str):
+            return raw.lower() not in ("false", "0", "")
+        return bool(raw)
+
+    def _self_updater(self) -> Any:
+        """The installer-aware updater (selfupdate.py), created on first use."""
+        if getattr(self, "_updater", None) is None:
+            from .. import selfupdate
+
+            self._updater = selfupdate.Updater(
+                selfupdate.App(
+                    repo="jongsu-king/xps-autofit-studio",
+                    name="XPS AutoFit Studio",
+                    version=__version__,
+                    env_prefix="XPS_AUTOFIT",
+                    pip_name="xps-autofit",
+                )
+            )
+            self._updater.cleanup()
+        return self._updater
+
+    def _release_for(self, info: UpdateInfo) -> Any:
+        from .. import selfupdate
+
+        return selfupdate.Release(
+            version=info.latest,
+            newer=info.is_newer,
+            page=info.url,
+            assets=dict(info.assets),
+            notes=info.notes,
+            published=info.published,
+        )
+
+    def can_self_install(self, info: UpdateInfo) -> bool:
+        """True for an installed copy (installer, DMG, archive, .deb) whose release has
+        a file for this computer and a SHA256SUMS.txt."""
+        if self.runner.synchronous:
+            return False
+        try:
+            return bool(self._self_updater().can_install(self._release_for(info)))
+        except Exception:
+            return False
+
+    def install_update(self, info: UpdateInfo, manual: bool) -> None:
+        """Download, verify and stage ``info`` in the background; ask to restart when ready."""
+        if getattr(self, "_install_thread", None) is not None:
+            return
+        self.log(f"downloading {info.latest} for this computer…")
+        self.update_label.setText(f"↓ Downloading {info.latest}…")
+        self.update_label.setVisible(True)
+        thread = UpdateInstallThread(self._self_updater(), self._release_for(info), self)
+        thread.done.connect(lambda result, i=info, m=manual: self._update_installed(result, i, m))
+        thread.finished.connect(self._install_thread_finished)
+        self._install_thread: UpdateInstallThread | None = thread
+        thread.start()
+
+    def _install_thread_finished(self) -> None:
+        thread, self._install_thread = getattr(self, "_install_thread", None), None
+        if thread is not None:
+            thread.deleteLater()
+
+    def _update_installed(self, result: object, info: UpdateInfo, manual: bool) -> None:
+        if isinstance(result, Exception):
+            self.log(f"update {info.latest} could not be prepared: {result}")
+            self.show_update(info)
+            if manual:
+                QMessageBox.warning(
+                    self, "Update", f"The update could not be prepared:\n{result}\n\n{info.url}"
+                )
+            return
+        self.update_label.setText(f"↑ {info.latest} ready - installs when you close")
+        self.update_label.setToolTip("Verified against SHA256SUMS.txt")
+        self.log(f"update {info.latest} downloaded and verified; installs on exit")
+        answer = QMessageBox.question(
+            self,
+            "Update ready",
+            f"XPS AutoFit Studio {info.latest} has been downloaded and verified (SHA-256).\n\n"
+            "Restart now to finish updating? If you choose No, it is installed when you "
+            "close the program.",
+        )
+        if answer == QMessageBox.StandardButton.Yes and self._self_updater().apply_now(True):
+            QTimer.singleShot(50, QApplication.instance().quit)
+
     def update_check_due(self) -> bool:
         """Startup check wanted, not disabled by the environment, and not done recently."""
         if disabled_by_environment() or not self.update_check_enabled():
@@ -600,6 +714,9 @@ class MainWindow(QMainWindow):
         if not manual and skipped == info.latest:
             self.log(f"update check: {info.latest} available (skipped by you)")
             return
+        if not manual and self.auto_install_enabled() and self.can_self_install(info):
+            self.install_update(info, manual=False)
+            return
         self.show_update(info)
         if manual:
             self._update_dialog(info)
@@ -632,12 +749,17 @@ class MainWindow(QMainWindow):
         if info.notes:
             detail += "\n\n" + info.notes[:1500]
         box.setDetailedText(detail)
-        download = box.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+        installable = self.can_self_install(info)
+        download = box.addButton(
+            "Download and install" if installable else "Download", QMessageBox.ButtonRole.AcceptRole
+        )
         skip = box.addButton("Skip this version", QMessageBox.ButtonRole.DestructiveRole)
         box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
         box.exec()
         clicked = box.clickedButton()
-        if clicked is download:
+        if clicked is download and installable:
+            self.install_update(info, manual=True)
+        elif clicked is download:
             QDesktopServices.openUrl(QUrl(asset[1] if asset else info.url))
         elif clicked is skip:
             self.settings_store.setValue("update_check/skip_version", info.latest)

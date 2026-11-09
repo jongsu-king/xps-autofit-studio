@@ -47,6 +47,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "addtopath"; Description: "Add the command-line tool (xps-autofit) to PATH"; GroupDescription: "Command line:"; Flags: unchecked
 
+[InstallDelete]
+; an upgrade (also the silent one started by the in-app updater) must not keep
+; libraries of the previous version
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

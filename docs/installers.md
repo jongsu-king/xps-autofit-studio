@@ -8,7 +8,8 @@ the engine; nothing else needs to be installed.
 |---|---|---|
 | Windows 10/11 x64 | `XPS-AutoFit-Studio-<version>-Windows-x64-Setup.exe` | Run the installer. Start-menu entry "XPS AutoFit Studio"; optional desktop icon and "add xps-autofit to PATH" |
 | Windows (portable) | `XPS-AutoFit-Studio-<version>-Windows-x64.zip` | Unzip anywhere, run `XPS AutoFit Studio.exe` or `xps-autofit.exe` |
-| macOS 12+ (Apple Silicon) | `XPS-AutoFit-Studio-<version>-macOS-arm64.dmg` | Open the DMG and drag the app to Applications |
+| macOS 12+ (Apple silicon) | `XPS-AutoFit-Studio-<version>-macOS-arm64.dmg` | Open the DMG and drag the app to Applications |
+| macOS 12+ (Intel) | `XPS-AutoFit-Studio-<version>-macOS-x86_64.dmg` | Same, for Macs with an Intel processor (from the release after 0.5.0) |
 | Debian / Ubuntu x64 | `xps-autofit-studio_<version>_amd64.deb` | `sudo apt install ./xps-autofit-studio_<version>_amd64.deb` - installs `/opt/xps-autofit-studio`, the commands `xps-autofit-studio` and `xps-autofit`, and a desktop entry |
 | Linux (portable) | `XPS-AutoFit-Studio-<version>-Linux-x86_64.tar.gz` | Extract and run `./XPS AutoFit Studio` or `./xps-autofit` |
 
@@ -17,12 +18,34 @@ the engine; nothing else needs to be installed.
 ## Updating
 
 The desktop application checks the GitHub Releases API once a day (when *Help >
-Check for updates at startup* is on) and shows a newer version as a link in the
-status bar that opens the installer for your operating system. Install it over the
-existing version: the Windows setup program replaces the previous installation, the
-macOS DMG replaces the app in Applications, and `apt install ./…deb` upgrades the
-package. `xps-autofit update-check` does the same from the command line, and
-`XPS_AUTOFIT_NO_UPDATE_CHECK=1` turns the automatic check off.
+Check for updates at startup* is on; one anonymous request, the User-Agent carries
+only the version).
+
+**Automatic installation** (*Help > Install updates automatically*, on by default;
+from the release after 0.5.0). In a copy installed from one of the release files,
+a newer release is downloaded in the background, its SHA-256 is compared with the
+release's `SHA256SUMS.txt` (a mismatch deletes the file and nothing is installed),
+and it is installed when you close the program - or at once if you answer *Yes* to
+*Restart now?*. How it is applied:
+
+| Installed from | Update |
+|---|---|
+| Windows setup | the new setup runs silently (`/VERYSILENT`) into the same folder; the program restarts if you chose *Restart now* |
+| Windows zip | the program folder is replaced after the program exits (the folder must be writable) |
+| macOS DMG | the new app is copied next to the old one and swapped in after exit (keep the app in a writable folder such as Applications; a copy started from the DMG or Downloads can only show the notice) |
+| Linux tar.gz | the extracted folder is replaced after exit |
+| Linux .deb | `pkexec apt-get install` asks for your password once and upgrades the package |
+| pip / source | nothing is changed; the notice shows `pip install -U "xps-autofit[gui]"` |
+
+With the option off, the newer version is shown as a link in the status bar and
+*Help > Check for updates…* offers *Download* (opens the installer for your system),
+*Skip this version* or *Later*; install it over the existing version.
+
+Command line: `xps-autofit update-check` reports, `xps-autofit update-check --install`
+downloads, verifies and installs (installed copies). `XPS_AUTOFIT_NO_UPDATE_CHECK=1`
+turns the automatic check off. A log of every applied update is written to
+`update.log` in `%APPDATA%\XPS AutoFit Studio`, `~/Library/Application Support/XPS AutoFit Studio`
+or `~/.config/XPS AutoFit Studio`.
 
 ## Unsigned builds
 

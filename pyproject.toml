@@ -68,6 +68,9 @@ include = ["src", "tests", "examples", "docs", "README.md", "LICENSE", "CITATION
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# selfupdate.py is a shared copy kept identical across the jongsu-king desktop
+# programs (Python 3.8+); it is checked by its own tests, not restyled here.
+extend-exclude = ["src/xps_autofit/selfupdate.py", "tests/test_selfupdate.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W", "SIM"]
@@ -80,6 +83,10 @@ mypy_path = "src"
 ignore_missing_imports = true
 warn_unused_ignores = true
 check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "xps_autofit.selfupdate"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

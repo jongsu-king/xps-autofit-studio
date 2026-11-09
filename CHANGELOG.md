@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added - installers and updates
+- **Automatic installation of updates** for installed copies (*Help > Install
+  updates automatically*, on by default): a newer release is downloaded in the
+  background, verified against the release's `SHA256SUMS.txt` and installed on exit
+  or after *Restart now* (Windows setup run silently, zip folder / macOS app / Linux
+  folder swapped after exit, `.deb` via `pkexec apt-get`). The update dialog offers
+  *Download and install* for such copies; `xps-autofit update-check --install` does it
+  from the command line. pip and source installs are never modified
+  (`selfupdate.py`, shared with the other jongsu-king desktop programs).
+- **macOS disk image for Intel Macs** (`…-macOS-x86_64.dmg`, built on `macos-15-intel`).
+- The release notes get a generated download table (platform, size, SHA-256, how to
+  install) after the installers are attached.
+- The Windows installer removes the previous `_internal` folder before an upgrade.
+
 ### Added - engine and command line
 - **Origin-style figures**: the PNG/SVG/PDF figures of `fit`, `batch` and the
   application's EXPORT use a publication look in the manner of OriginLab graphs
