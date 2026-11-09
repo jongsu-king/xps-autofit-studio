@@ -12,6 +12,7 @@ import pandas as pd
 from PySide6.QtCore import QDateTime, QSettings, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
     QFileDialog,
     QInputDialog,
@@ -57,6 +58,15 @@ from .panels import (
 )
 from .plot_widget import SpectrumPlot
 from .session import RegionState, Session
+from .theme import (
+    DEFAULT_PLOT_STYLE,
+    DEFAULT_THEME,
+    PLOT_STYLE_NAMES,
+    THEMES,
+    apply_theme,
+    current,
+    plot_style,
+)
 from .workers import JobRunner
 
 MAX_RECENT = 12
@@ -99,8 +109,17 @@ class MainWindow(QMainWindow):
         self.last_update_info: UpdateInfo | None = None
         self.last_identification: Identification | None = None
 
-        # ---- central plot
-        self.plot = SpectrumPlot()
+        # ---- theme and plot style (persisted) and the central plot
+        self._theme = str(self.settings_store.value("ui/theme", DEFAULT_THEME))
+        if self._theme not in THEMES:
+            self._theme = DEFAULT_THEME
+        self._plot_style = str(self.settings_store.value("ui/plot_style", DEFAULT_PLOT_STYLE))
+        if self._plot_style not in PLOT_STYLE_NAMES:
+            self._plot_style = DEFAULT_PLOT_STYLE
+        app = QApplication.instance()
+        if isinstance(app, QApplication) and current().name != self._theme:
+            apply_theme(app, self._theme)
+        self.plot = SpectrumPlot(style=plot_style(self._plot_style))
         self.setCentralWidget(self.plot)
 
         # ---- left dock: samples
@@ -354,6 +373,33 @@ class MainWindow(QMainWindow):
         self.act_stack.setToolTip("Waterfall: each spectrum offset by half the largest range")
         self.act_stack.toggled.connect(lambda _on: self._redraw_compare())
         m_view.addAction(self.act_stack)
+        m_view.addSeparator()
+        # Theme and plot style (both persisted)
+        m_theme = m_view.addMenu("Theme")
+        self.theme_group = QActionGroup(self)
+        self.theme_actions: dict[str, QAction] = {}
+        for name, label in (("dark", "Dark (instrument)"), ("light", "Light")):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(name == self.theme_name())
+            action.triggered.connect(lambda _c=False, n=name: self.set_theme(n))
+            self.theme_group.addAction(action)
+            m_theme.addAction(action)
+            self.theme_actions[name] = action
+        m_style = m_view.addMenu("Plot style")
+        self.plot_style_group = QActionGroup(self)
+        self.plot_style_actions: dict[str, QAction] = {}
+        for name, label in (
+            ("origin", "Origin-style (publication)"),
+            ("instrument", "Instrument (follows the theme)"),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(name == self.plot_style_name())
+            action.triggered.connect(lambda _c=False, n=name: self.set_plot_style(n))
+            self.plot_style_group.addAction(action)
+            m_style.addAction(action)
+            self.plot_style_actions[name] = action
         m_help = self.menuBar().addMenu("&Help")
         self.act_check_updates = QAction("Check for updates…", self)
         self.act_check_updates.triggered.connect(lambda: self.check_for_updates(manual=True))
@@ -379,6 +425,47 @@ class MainWindow(QMainWindow):
             )
         )
         m_help.addAction(about)
+
+    # ------------------------------------------------------------ theme / style
+    def theme_name(self) -> str:
+        """The theme in use (``"dark"`` or ``"light"``)."""
+        return self._theme
+
+    def plot_style_name(self) -> str:
+        """The plot style in use (``"origin"`` or ``"instrument"``)."""
+        return self._plot_style
+
+    def set_theme(self, name: str, persist: bool = True) -> str:
+        """Switch between the dark and light themes; the plot follows if it is in
+        the instrument style.  Returns the theme applied."""
+        if name not in THEMES:
+            raise ValueError(f"unknown theme {name!r}; choose from {sorted(THEMES)}")
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            apply_theme(app, name)
+        self._theme = name
+        if persist:
+            self.settings_store.setValue("ui/theme", name)
+        action = getattr(self, "theme_actions", {}).get(name)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
+        self.plot.set_style(plot_style(self.plot_style_name(), current()))
+        self.log(f"theme: {name}")
+        return name
+
+    def set_plot_style(self, name: str, persist: bool = True) -> str:
+        """``"origin"`` (publication look) or ``"instrument"`` (follows the theme)."""
+        if name not in PLOT_STYLE_NAMES:
+            raise ValueError(f"unknown plot style {name!r}; choose from {PLOT_STYLE_NAMES}")
+        self._plot_style = name
+        if persist:
+            self.settings_store.setValue("ui/plot_style", name)
+        action = getattr(self, "plot_style_actions", {}).get(name)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
+        self.plot.set_style(plot_style(name, current()))
+        self.log(f"plot style: {name}")
+        return name
 
     # ------------------------------------------------------------------ logging
     def log(self, text: str) -> None:

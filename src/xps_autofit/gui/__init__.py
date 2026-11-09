@@ -20,13 +20,16 @@ def run(argv: list[str] | None = None) -> int:
         from PySide6.QtWidgets import QApplication
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise SystemExit(f"{GUI_INSTALL_HINT}\n({exc})") from exc
+    from PySide6.QtCore import QSettings
+
     from .main_window import MainWindow
-    from .theme import apply_theme
+    from .theme import DEFAULT_THEME, THEMES, apply_theme
 
     app = QApplication.instance()
     if app is None:
         app = QApplication(argv if argv is not None else sys.argv)
-    apply_theme(cast(QApplication, app))
+    theme = str(QSettings("xps-autofit", "studio").value("ui/theme", DEFAULT_THEME))
+    apply_theme(cast(QApplication, app), theme if theme in THEMES else DEFAULT_THEME)
     window = MainWindow()
     window.show()
     return app.exec()

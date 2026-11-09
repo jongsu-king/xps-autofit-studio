@@ -61,6 +61,22 @@ def main(out_dir: str | Path) -> list[Path]:
         win.grab().save(str(p))
         written.append(p)
 
+        # 1b. The same fit in the light theme, and in the instrument plot style
+        #     (settings are not persisted: these are the documentation's looks)
+        win.set_theme("light", persist=False)
+        app.processEvents()
+        p = out / "gui_light_theme.png"
+        win.grab().save(str(p))
+        written.append(p)
+        win.set_theme("dark", persist=False)
+        win.set_plot_style("instrument", persist=False)
+        app.processEvents()
+        p = out / "gui_plot_instrument.png"
+        win.grab().save(str(p))
+        written.append(p)
+        win.set_plot_style("origin", persist=False)
+        app.processEvents()
+
         # 2. Diagnostics readout (with bootstrap) and the candidate-model table of
         #    the same fit, rendered on their own so the text is legible.
         win.run_uncertainty(60)

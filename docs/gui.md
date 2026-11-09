@@ -117,6 +117,27 @@ returns to its fit.
 
 ![Comparison view of two S 2p spectra, normalised and stacked](images/gui_compare.png)
 
+## Themes and plot style
+
+*View > Theme* switches between the dark instrument theme and a light theme; both
+use the same layout and the figures' validated palette. *View > Plot style*
+chooses how the live plot draws itself, independently of the theme:
+
+- **Origin-style** (default): a publication look in the manner of OriginLab
+  graphs. White canvas, black frame on all four sides with inward ticks, Arial tick
+  and axis labels, no grid, open black data symbols, a red envelope, a grey dashed
+  background, filled components and a boxed legend. **Save plot image…** exports
+  exactly this view.
+- **Instrument**: the canvas follows the theme (dark or light), with a grid and
+  axes on the left and bottom only.
+
+Both choices are remembered between sessions. Switching redraws the current fit
+with its draggable centre lines, element marks and title.
+
+![Light theme with the Origin-style plot](images/gui_light_theme.png)
+
+![Dark theme with the instrument plot style](images/gui_plot_instrument.png)
+
 ## Robustness and quality
 
 The *Robustness* group of the settings panel selects the loss function

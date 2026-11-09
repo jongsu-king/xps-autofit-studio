@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added - desktop application
+- **Light theme** next to the dark instrument theme (*View > Theme*, remembered
+  between sessions). Both themes share one stylesheet template and the figures'
+  validated palette: dark-surface series colours in the dark theme, light-surface
+  ones in the light theme.
+- **Origin-style plot** (*View > Plot style*, the default): a publication look in
+  the manner of OriginLab graphs: white canvas, black frame on all four sides,
+  inward ticks, Arial tick and axis labels, no grid, open black data symbols, red
+  envelope, grey dashed background, filled components, a boxed legend. The
+  *Instrument* style follows the theme as before (dark or light canvas, grid).
+  Switching style or theme redraws the current fit, keeps the draggable centre
+  lines, element marks and a renamed title; the setting is remembered. The legend
+  is now compact at the top of its column instead of stretched over the plot
+  height.
+
 ### Fixed
 - The PyPI publish workflow read the package version by importing it, which
   needs the dependencies its build job does not install; it now reads the

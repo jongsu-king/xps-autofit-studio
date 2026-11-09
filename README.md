@@ -75,7 +75,7 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu |
 | **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures, per-run summaries; `verify` reproduces a project |
-| **Desktop app** | Instrument-style PySide6/PyQtGraph window: sample tree, live plot with draggable centre lines, settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), bootstrap, batch, export, element identification, update notice |
+| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), bootstrap, batch, export, element identification, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
 ## Install
@@ -314,7 +314,9 @@ software. Readers for additional formats can be registered with
   correction arithmetic and its recipe round trip
 - the desktop application offscreen: loading, fitting, FIT ALL, dragging, editing,
   renaming, undo/redo, charge alignment, composition, comparison view, bootstrap,
-  export, batch, identification and the update notice
+  export, batch, identification, the update notice, the light and dark themes and
+  the Origin-style / instrument plot styles (box axes, inward ticks, colours,
+  persistence, redraw of the current fit)
 - preservation of S 2p splitting and area ratio; correct component count on fresh
   and oxidised P3HT-like spectra; no over-fitting at low signal-to-noise
 - descending and non-uniform energy axes
@@ -326,7 +328,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (201 tests, about six minutes). Comparisons with real instrument
+Run `pytest` to execute them (206 tests, about seven minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 
@@ -365,7 +367,8 @@ XPS 스펙트럼(CSV·TXT·VAMAS·엑셀 .xlsx)을 불러와 배경 제거(Linea
 선택), 서베이 스펙트럼의 원소 식별, CasaXPS식 GL(p) 곱 선형, 논문용 그림과
 재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는 도구입니다. 같은
 레시피를 여러 시료에 적용해 피크 수를 임의로 늘리지 않고 비교할 수 있습니다.
-`xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱 화면으로, 피크
+`xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱 화면(다크·라이트
+테마, Origin 풍 출판용 그래프 또는 장비 스타일 그래프 선택)으로, 피크
 중심선을 끌어 옮기거나 성분을 더하고 빼며 다시 피팅하고(실행 취소·다시 실행),
 스펙트럼 제목과 성분 이름을 고치고, FIT ALL로 불러온 스펙트럼을 모두 피팅하고,
 ALIGN으로 전하 보정을 적용하고, Composition 탭에서 시료의 원자 백분율을 읽고,

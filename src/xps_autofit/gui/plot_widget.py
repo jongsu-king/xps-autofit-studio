@@ -1,26 +1,27 @@
 """Live spectrum view: raw data, background, components, envelope, residual.
 
 Major components carry a draggable centre line; releasing it emits
-``centerDragged(label, energy)`` so the main window can refit.
+``centerDragged(label, energy)`` so the main window can refit.  The look comes from a
+:class:`~xps_autofit.gui.theme.PlotStyle` (publication "origin" style or the
+theme-following "instrument" style) and can be changed while a fit is shown.
 """
 
 from __future__ import annotations
 
 import contextlib
+from typing import Any
 
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from ..core.fitting import FitResult
 from ..core.spectrum import Spectrum
-from .theme import GRID, INK, INK_SECONDARY, MUTED, SERIES_DARK
+from .theme import PlotStyle, plot_style, rgba
 
-
-def _rgba(hex_color: str, alpha: int) -> tuple[int, int, int, int]:
-    h = hex_color.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), alpha
+_AXES = ("left", "bottom", "top", "right")
 
 
 def background_label(result: FitResult) -> str:
@@ -39,8 +40,10 @@ class SpectrumPlot(QWidget):
     cursorMoved = Signal(float, float)
     """Mouse position in data coordinates: (binding energy, intensity)."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, style: PlotStyle | None = None) -> None:
         super().__init__(parent)
+        self.look: PlotStyle = style or plot_style()
+        """The active :class:`PlotStyle` (``style`` would shadow ``QWidget.style()``)."""
         self.view = pg.GraphicsLayoutWidget()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -52,36 +55,99 @@ class SpectrumPlot(QWidget):
         self.view.ci.layout.setRowStretchFactor(1, 1)
         for p in (self.main, self.resid):
             p.invertX(True)
-            p.showGrid(x=True, y=True, alpha=0.15)
-            p.getAxis("left").setPen(pg.mkPen(GRID))
-            p.getAxis("bottom").setPen(pg.mkPen(GRID))
-            p.getAxis("left").setTextPen(pg.mkPen(INK_SECONDARY))
-            p.getAxis("bottom").setTextPen(pg.mkPen(INK_SECONDARY))
         self.resid.setXLink(self.main)
-        self.main.setLabel("left", "Intensity")
-        self.resid.setLabel("left", "Residual")
-        self.resid.setLabel("bottom", "Binding energy (eV)")
         self.main.getAxis("bottom").setStyle(showValues=False)
+        self._labels: dict[tuple[str, str], str] = {
+            ("main", "left"): "Intensity",
+            ("resid", "left"): "Residual",
+            ("resid", "bottom"): "Binding energy (eV)",
+        }
+        self._title = ""
         # Legend outside the data area (own column, both rows) so it never hides a peak.
-        self.legend = pg.LegendItem(labelTextColor=INK_SECONDARY, brush=pg.mkBrush(19, 19, 18, 0))
+        self.legend = pg.LegendItem()
         self.view.addItem(self.legend, row=0, col=1, rowspan=2)
         self.view.ci.layout.setColumnFixedWidth(1, 200)
+        # Keep the legend compact at the top of its column instead of letting the
+        # grid layout stretch it over both rows.
+        self.legend.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.view.ci.layout.setAlignment(
+            self.legend, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
         self.main.legend = self.legend
-        self.title_item = pg.TextItem("", color=INK_SECONDARY, anchor=(0, 1))
         self._lines: dict[str, pg.InfiniteLine] = {}
         self._marks: list[pg.InfiniteLine] = []
+        self._mark_spec: list[tuple[str, float]] = []
         self._spectrum: Spectrum | None = None
         self._view_x: np.ndarray | None = None
         """Energy axis of the comparison view (``None`` outside it)."""
+        self._last: tuple[str, tuple[Any, ...], dict[str, Any]] | None = None
+        """The last ``show_*`` call, replayed when the style changes."""
         # Crosshair: a thin vertical hairline that follows the mouse in both panels.
-        self._cross_main = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(GRID, width=1))
-        self._cross_resid = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(GRID, width=1))
+        self._cross_main = pg.InfiniteLine(angle=90, movable=False)
+        self._cross_resid = pg.InfiniteLine(angle=90, movable=False)
         for item in (self._cross_main, self._cross_resid):
             item.setZValue(-10)
             item.hide()
         self._proxy = pg.SignalProxy(
             self.main.scene().sigMouseMoved, rateLimit=40, slot=self._mouse_moved
         )
+        self._apply_style()
+
+    # ------------------------------------------------------------------- style
+    def set_style(self, style: PlotStyle) -> None:
+        """Switch the look and redraw whatever is shown."""
+        self.look = style
+        self._apply_style()
+        if self._last is not None:
+            method, args, kwargs = self._last
+            marks = list(self._mark_spec)
+            title = self._title  # may have been renamed after the last show_* call
+            getattr(self, method)(*args, **kwargs)
+            if marks:
+                self.mark_lines(marks)
+            self.set_title(title)
+
+    def _apply_style(self) -> None:
+        s = self.look
+        self.view.setBackground(s.canvas)
+        font = QFont(s.font_family, s.tick_font_pt) if s.font_family else None
+        for p in (self.main, self.resid):
+            for name in _AXES:
+                ax = p.getAxis(name)
+                ax.setPen(pg.mkPen(s.frame, width=1))
+                ax.setTextPen(pg.mkPen(s.text))
+                ax.setTickFont(font)
+                ax.setStyle(tickLength=-6 if s.ticks_inward else 5, tickTextOffset=6)
+            if s.box:
+                p.showAxis("top")
+                p.showAxis("right")
+                p.getAxis("top").setStyle(showValues=False)
+                p.getAxis("right").setStyle(showValues=False)
+            else:
+                p.hideAxis("top")
+                p.hideAxis("right")
+            p.showGrid(x=s.grid, y=s.grid, alpha=0.15)
+        for (which, axis), text in self._labels.items():
+            self._set_label(which, axis, text)
+        self.legend.setLabelTextColor(s.text)
+        self.legend.setPen(pg.mkPen(s.legend_pen) if s.legend_pen else pg.mkPen(None))
+        self.legend.setBrush(pg.mkBrush(*s.legend_fill))
+        for item in (self._cross_main, self._cross_resid):
+            item.setPen(pg.mkPen(s.crosshair, width=1))
+        self.main.setTitle(self._title, color=s.text, size="11pt")
+
+    def _set_label(self, which: str, axis: str, text: str) -> None:
+        self._labels[(which, axis)] = text
+        s = self.look
+        plot = self.main if which == "main" else self.resid
+        extra: dict[str, str] = {"color": s.text}
+        if s.font_family:
+            extra["font-family"] = s.font_family
+            extra["font-size"] = f"{s.label_font_pt}pt"
+        plot.setLabel(axis, text, **extra)
+
+    def _series_color(self, index: int) -> str:
+        return self.look.series[index % len(self.look.series)]
 
     # ------------------------------------------------------------------ helpers
     def _reset(self) -> None:
@@ -90,6 +156,7 @@ class SpectrumPlot(QWidget):
         self.legend.clear()
         self._lines.clear()
         self._marks = []
+        self._mark_spec = []
         self.main.addItem(self._cross_main, ignoreBounds=True)
         self.resid.addItem(self._cross_resid, ignoreBounds=True)
 
@@ -129,6 +196,7 @@ class SpectrumPlot(QWidget):
         profiles).  The residual panel is empty in this view.  Returns the number of
         curves drawn.
         """
+        self._last = ("show_overlay", (entries, normalise, stack, title), {})
         self._reset()
         self._spectrum = None
         if not entries:
@@ -146,7 +214,7 @@ class SpectrumPlot(QWidget):
             ys.append(y)
         span = max(float(np.ptp(y)) for y in ys) or 1.0
         for i, ((name, spec), y) in enumerate(zip(entries, ys)):
-            color = SERIES_DARK[i % len(SERIES_DARK)]
+            color = self._series_color(i)
             self.main.plot(
                 spec.energy, y + i * stack * span, pen=pg.mkPen(color, width=1.5), name=name
             )
@@ -155,8 +223,8 @@ class SpectrumPlot(QWidget):
         )
         if stack:
             unit += ", offset"
-        self.main.setLabel("left", f"Intensity ({unit})")
-        self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
+        self._set_label("main", "left", f"Intensity ({unit})")
+        self.set_title(title)
         self._view_x = np.concatenate([np.asarray(s.energy, dtype=float) for _n, s in entries])
         self._fit_view(self._view_x)
         return len(entries)
@@ -174,29 +242,33 @@ class SpectrumPlot(QWidget):
             self._proxy = None
 
     def show_spectrum(self, spectrum: Spectrum, title: str = "") -> None:
+        self._last = ("show_spectrum", (spectrum, title), {})
         self._reset()
         self._view_x = None
         self._spectrum = spectrum
         self._draw_raw(spectrum.energy, spectrum.intensity)
-        self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
-        self.main.setLabel("left", f"Intensity ({spectrum.intensity_unit})")
+        self.set_title(title)
+        self._set_label("main", "left", f"Intensity ({spectrum.intensity_unit})")
         self._fit_view(spectrum.energy)
 
     def _draw_raw(self, x: np.ndarray, y: np.ndarray) -> None:
+        s = self.look
         self.main.plot(
             x,
             y,
             pen=None,
             symbol="o",
-            symbolSize=4,
-            symbolPen=pg.mkPen(MUTED, width=0.8),
+            symbolSize=s.symbol_size,
+            symbolPen=pg.mkPen(s.raw, width=1.0),
             symbolBrush=None,
             name="Raw",
         )
 
     def show_result(self, result: FitResult, title: str = "", draggable: bool = True) -> None:
+        self._last = ("show_result", (result, title, draggable), {})
         self._reset()
         self._view_x = None
+        s = self.look
         x = result.x
         bg = result.background_total
         self._spectrum = Spectrum(x, result.y)
@@ -204,7 +276,7 @@ class SpectrumPlot(QWidget):
         bg_curve = self.main.plot(
             x,
             bg,
-            pen=pg.mkPen(MUTED, width=1, style=Qt.PenStyle.DashLine),
+            pen=pg.mkPen(s.background, width=1, style=Qt.PenStyle.DashLine),
             name=background_label(result),
         )
         majors = result.majors()
@@ -214,13 +286,13 @@ class SpectrumPlot(QWidget):
             if comp.values is None:
                 continue
             idx = next(j for j, m in enumerate(majors) if m.parent == comp.parent)
-            color = SERIES_DARK[idx % len(SERIES_DARK)]
+            color = self._series_color(idx)
             y = comp.values + bg
             if comp.is_minor:
                 self.main.plot(x, y, pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine))
                 continue
             curve = self.main.plot(x, y, pen=pg.mkPen(color, width=1.5), name=comp.label)
-            fill = pg.FillBetweenItem(bg_curve, curve, brush=pg.mkBrush(*_rgba(color, 45)))
+            fill = pg.FillBetweenItem(bg_curve, curve, brush=pg.mkBrush(*rgba(color, s.fill_alpha)))
             self.main.addItem(fill)
             if draggable:
                 line = pg.InfiniteLine(
@@ -233,7 +305,7 @@ class SpectrumPlot(QWidget):
                     labelOpts={
                         "position": 0.95 - 0.08 * (slot[comp.parent] % 5),
                         "color": color,
-                        "fill": (20, 20, 19, 190),
+                        "fill": s.label_fill,
                         # The x axis is inverted (binding energy): swap the default
                         # anchors so the label still sits on the side facing the
                         # centre of the view instead of running off the edge.
@@ -246,22 +318,23 @@ class SpectrumPlot(QWidget):
                 )
                 self.main.addItem(line)
                 self._lines[comp.parent] = line
-        self.main.plot(x, result.model, pen=pg.mkPen(INK, width=2), name="Envelope")
+        self.main.plot(
+            x, result.model, pen=pg.mkPen(s.envelope, width=s.envelope_width), name="Envelope"
+        )
 
         if result.sigma is not None:
             upper = self.resid.plot(x, result.sigma, pen=None)
             lower = self.resid.plot(x, -result.sigma, pen=None)
-            self.resid.addItem(
-                pg.FillBetweenItem(lower, upper, brush=pg.mkBrush(*_rgba(GRID, 160)))
-            )
-        self.resid.addLine(y=0, pen=pg.mkPen(MUTED, width=0.8))
-        self.resid.plot(x, result.residual, pen=pg.mkPen(INK_SECONDARY, width=1))
-        self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
+            self.resid.addItem(pg.FillBetweenItem(lower, upper, brush=pg.mkBrush(*s.sigma_fill)))
+        self.resid.addLine(y=0, pen=pg.mkPen(s.background, width=0.8))
+        self.resid.plot(x, result.residual, pen=pg.mkPen(s.residual, width=1))
+        self.set_title(title)
         self._fit_view(x)
 
     def set_title(self, title: str) -> None:
         """Change the plot title without redrawing (after a rename)."""
-        self.main.setTitle(title, color=INK_SECONDARY, size="11pt")
+        self._title = title
+        self.main.setTitle(title, color=self.look.text, size="11pt")
 
     def _fit_view(self, x: np.ndarray) -> None:
         """Fix the x range from the data and auto-scale y; pyqtgraph's deferred
@@ -275,22 +348,24 @@ class SpectrumPlot(QWidget):
     def line_positions(self) -> dict[str, float]:
         return {label: float(line.value()) for label, line in self._lines.items()}
 
-    def mark_lines(self, marks: list[tuple[str, float]], color: str = INK_SECONDARY) -> None:
+    def mark_lines(self, marks: list[tuple[str, float]], color: str | None = None) -> None:
         """Label fixed energies on the spectrum (identified element lines)."""
         for item in self._marks:
             self.main.removeItem(item)
         self._marks = []
+        self._mark_spec = list(marks)
+        pen_color = color or self.look.text
         for i, (label, energy) in enumerate(marks):
             line = pg.InfiniteLine(
                 pos=energy,
                 angle=90,
                 movable=False,
-                pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine),
+                pen=pg.mkPen(pen_color, width=1, style=Qt.PenStyle.DotLine),
                 label=label,
                 labelOpts={
                     "position": 0.92 - 0.06 * (i % 8),
-                    "color": color,
-                    "fill": (20, 20, 19, 170),
+                    "color": pen_color,
+                    "fill": self.look.label_fill,
                     "anchors": [(1, 0.5), (0, 0.5)],
                 },
             )
