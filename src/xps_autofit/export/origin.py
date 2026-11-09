@@ -223,8 +223,10 @@ def find_origin_executable(
 
 
 def _open_with_default(path: Path) -> None:  # pragma: no cover - depends on the desktop
-    if sys.platform.startswith("win"):
-        os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
+    # ``sys.platform == "win32"`` (not ``startswith``) lets mypy check os.startfile on
+    # Windows and skip it elsewhere, so no platform-dependent "type: ignore" is needed.
+    if sys.platform == "win32":
+        os.startfile(str(path))  # noqa: S606
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])  # noqa: S603, S607
     else:
