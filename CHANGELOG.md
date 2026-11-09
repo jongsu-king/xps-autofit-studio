@@ -20,6 +20,11 @@ All notable changes to this project are documented here. The format follows
   install) after the installers are attached.
 - The Windows installer removes the previous `_internal` folder before an upgrade.
 
+### Fixed
+- The update check of the macOS (and some Linux) installer builds could not verify
+  GitHub's certificate - the bundled OpenSSL has no CA store there - and reported
+  "GitHub not reachable". Requests now fall back to certifi or the system CA bundle.
+
 ### Added - engine and command line
 - **Origin-style figures**: the PNG/SVG/PDF figures of `fit`, `batch` and the
   application's EXPORT use a publication look in the manner of OriginLab graphs

@@ -125,7 +125,11 @@ def fetch_github(url: str, timeout: float) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed https URL
+        from .selfupdate import ssl_context  # CA fallback for frozen builds (macOS)
+
+        with urllib.request.urlopen(  # noqa: S310 - fixed https URL
+            req, timeout=timeout, context=ssl_context()
+        ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise UpdateCheckError(f"GitHub answered {exc.code} {exc.reason}") from exc
