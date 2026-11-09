@@ -26,6 +26,8 @@ from ..export.project import load_project, project_dict, refit_from_project, sav
 from .session import Session
 
 SESSION_FORMAT = 1
+SESSION_KIND = "xps-autofit-session"
+"""Marks a session file; project files share the integer format number."""
 SESSION_SUFFIX = ".xpsession"
 
 
@@ -35,8 +37,13 @@ def spectrum_shift(history: list[dict[str, Any]]) -> float:
 
 
 def session_dict(session: Session) -> dict[str, Any]:
-    """Everything needed to restore ``session`` later."""
+    """Everything needed to restore ``session`` later.
+
+    ``unsaved`` lists spectra whose displayed result could not be written (a manual
+    result without the automatic selection it belongs to).
+    """
     spectra: list[dict[str, Any]] = []
+    unsaved: list[str] = []
     for key in session.order:
         item = session.items[key]
         spec = item.spectrum
@@ -49,7 +56,9 @@ def session_dict(session: Session) -> dict[str, Any]:
         st = session.results.get(key)
         if st is not None and st.result is not None:
             sel = st.as_selection()
-            if sel is not None:
+            if sel is None:
+                unsaved.append(item.display_name)
+            else:
                 entry["result"] = {
                     "status": st.status,
                     "notes": list(st.notes),
@@ -62,18 +71,21 @@ def session_dict(session: Session) -> dict[str, Any]:
     recipe = session.recipe
     return {
         "format": SESSION_FORMAT,
+        "kind": SESSION_KIND,
         "created_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "xps_autofit": __version__,
         "recipe": {"name": recipe.name, "source": recipe.source} if recipe else None,
         "spectra": spectra,
+        "unsaved": unsaved,
     }
 
 
-def save_session(path: str | Path, session: Session) -> Path:
+def save_session(path: str | Path, session: Session, data: dict[str, Any] | None = None) -> Path:
+    """Write ``session`` (or an already built ``data`` dictionary) to ``path``."""
     p = Path(path)
     if p.suffix.lower() != SESSION_SUFFIX:
         p = p.with_suffix(p.suffix + SESSION_SUFFIX) if p.suffix else p.with_suffix(SESSION_SUFFIX)
-    return save_project(p, session_dict(session))
+    return save_project(p, data if data is not None else session_dict(session))
 
 
 @dataclass
@@ -82,6 +94,8 @@ class RestoreReport:
     """Spectra present after the restore, in file order."""
     restored: list[str] = field(default_factory=list)
     """Spectra whose fit was rebuilt."""
+    kept: list[str] = field(default_factory=list)
+    """Spectra that already had a fit here and kept it (``replace_fits=False``)."""
     recipe: dict[str, Any] | None = None
     messages: list[str] = field(default_factory=list)
 
@@ -119,18 +133,40 @@ def _selection_from_project(
 
 
 def restore_session(
-    path: str | Path, session: Session, log: Callable[[str], None] | None = None
+    path: str | Path,
+    session: Session,
+    log: Callable[[str], None] | None = None,
+    replace_fits: bool = False,
 ) -> RestoreReport:
     """Load the files of a session into ``session`` and rebuild its fits.
 
-    Files that are already open keep their place; missing files and spectra are
-    reported, not fatal.
+    Files that are already open keep their place.  A spectrum that already has a fit
+    here keeps it unless ``replace_fits`` is true (the stored fit would otherwise
+    replace the user's work and its undo history).  Missing files and spectra are
+    reported, not fatal; a file that is not a session raises ``ValueError``.
     """
     data = load_project(path)
-    report = RestoreReport(recipe=data.get("recipe"))
+    if not isinstance(data, dict) or data.get("kind") != SESSION_KIND:
+        what = (
+            "an exported project file"
+            if isinstance(data, dict) and "selection" in data
+            else "not a session file"
+        )
+        raise ValueError(f"{Path(path).name}: {what} (no {SESSION_KIND!r} marker)")
     if int(data.get("format", 0)) != SESSION_FORMAT:
-        raise ValueError(f"{Path(path).name}: not a session file (format {data.get('format')!r})")
-    entries = list(data.get("spectra", []))
+        raise ValueError(
+            f"{Path(path).name}: session format {data.get('format')!r} is not supported"
+        )
+    report = RestoreReport(recipe=data.get("recipe"))
+    raw_entries = data.get("spectra", [])
+    if not isinstance(raw_entries, list):
+        raise ValueError(f"{Path(path).name}: 'spectra' must be a list")
+    entries: list[dict[str, Any]] = []
+    for e in raw_entries:
+        try:
+            entries.append({**e, "path": str(e["path"]), "index": int(e["index"])})
+        except (TypeError, KeyError, ValueError):
+            report.messages.append(f"skipped a malformed spectrum entry: {e!r}")
     for file_path in dict.fromkeys(e["path"] for e in entries):
         if not Path(file_path).is_file():
             report.messages.append(f"missing file: {file_path}")
@@ -155,6 +191,14 @@ def restore_session(
             item.spectrum = item.spectrum.shift(wanted_shift - have_shift, "session restore")
         result = e.get("result")
         if not result:
+            continue
+        current = session.results.get(key)
+        if current is not None and current.result is not None and not replace_fits:
+            report.kept.append(key)
+            report.messages.append(
+                f"{item.display_name}: kept the fit already open here "
+                "(the session's fit was not applied)"
+            )
             continue
         try:
             selection = _selection_from_project(

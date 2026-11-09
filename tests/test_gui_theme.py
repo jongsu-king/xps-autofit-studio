@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 pytest.importorskip("pyqtgraph")
 
+from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from xps_autofit.export.plots import SERIES as FIGURE_SERIES  # noqa: E402
@@ -162,7 +163,10 @@ def test_theme_switch_persists_and_redraws(window, app, data_dir):
 
 
 def test_persisted_theme_is_applied_at_construction(app):
-    settings = MainWindow(synchronous_jobs=True).settings_store
+    # Never create a window only to drop it: a MainWindow collected by the cyclic GC
+    # deletes its Qt objects at an arbitrary later moment, which aborts the process
+    # on some platforms.  Read the settings directly instead.
+    settings = QSettings("xps-autofit", "studio")
     saved_theme, saved_style = settings.value("ui/theme"), settings.value("ui/plot_style")
     try:
         settings.setValue("ui/theme", "light")
@@ -176,6 +180,7 @@ def test_persisted_theme_is_applied_at_construction(app):
         assert win.plot_style_actions["instrument"].isChecked()
         win.close()
         win.deleteLater()
+        app.processEvents()
     finally:
         for key, value in (("ui/theme", saved_theme), ("ui/plot_style", saved_style)):
             if value is None:

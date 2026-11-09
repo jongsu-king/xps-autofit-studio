@@ -29,6 +29,29 @@ All notable changes to this project are documented here. The format follows
   not stored; missing files are reported and the rest restored.
 - **Suggest recipe from survey…** (Analysis menu) after IDENTIFY: writes the
   proposed recipe and selects it in the Recipe box.
+- **Parameter locks**: *Fix C* and *Fix W* check boxes in the Components table hold
+  a component's centre or its widths during refits (`ComponentSpec.vary_width` is
+  new; `vary_center` existed). Locks travel with project and session files.
+- **Plot options…** (*View*, Ctrl+Shift+P): title, axis labels, tick / label font
+  sizes, symbol size, envelope width, fill opacity, legend / fills / centre labels
+  on or off, fixed x / y ranges; persisted, with *Restore defaults*.
+- **Save settings as recipe…** (*File*): the panel's region plus the other regions
+  of the recipe in use as a YAML recipe, optionally with the fitted components as
+  candidate states and a fixed component count; selected in the Recipe box.
+
+### Fixed
+- Session files carry a `kind` marker: an exported project JSON (same integer
+  format) is now rejected with a clear message instead of restoring nothing.
+- Opening a session no longer replaces fits that are already open (and their undo
+  history) unless asked (`replace_fits`); malformed entries are skipped and
+  reported; structural errors are caught instead of escaping the menu action.
+- A recipe file that disappears or breaks no longer raises from the Recipe box; the
+  box falls back to manual settings with a log line.
+- Origin-style figures set their fonts on the artists, so a figure returned without
+  saving keeps them; the first installed family is resolved once (no font warnings).
+- A manual result without an automatic fit behind it is now reported as unsaved
+  by *Save session*; `--elements` ignores empty names; a theme change no longer
+  redraws an Origin-style plot; the tree is rebuilt once after a session restore.
 - **Light theme** next to the dark instrument theme (*View > Theme*, remembered
   between sessions). Both themes share one stylesheet template and the figures'
   validated palette: dark-surface series colours in the dark theme, light-surface
@@ -43,7 +66,9 @@ All notable changes to this project are documented here. The format follows
   is now compact at the top of its column instead of stretched over the plot
   height.
 
-### Fixed
+- GUI tests no longer create a `MainWindow` only to drop it: the cyclic garbage
+  collector deleted its Qt objects at an arbitrary later moment, which aborted the
+  Linux / Python 3.11 CI job in the middle of the run (exit 134 after 172 tests).
 - The PyPI publish workflow read the package version by importing it, which
   needs the dependencies its build job does not install; it now reads the
   version from the source file and also checks the built wheel's name.

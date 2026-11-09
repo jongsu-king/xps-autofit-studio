@@ -636,12 +636,17 @@ COMPONENT_HEADERS = [
     "FWHM G",
     "FWHM L",
     "Asym",
+    "Fix C",
+    "Fix W",
 ]
+LOCK_COLUMNS = {10: "vary_center", 11: "vary_width"}
+"""Check-box columns: a tick fixes the centre / the widths of that component."""
 
 
 class ComponentsTable(CopyableTable):
     componentEdited = Signal(str, str, float)  # parent label, field, value
     componentRenamed = Signal(str, str)  # parent label, new name typed into column 0
+    componentLocked = Signal(str, str, bool)  # parent label, spec field, vary flag
 
     EDITABLE_COLUMNS = (0, 1, 7, 8)  # name, centre, FWHM G, FWHM L (major lines only)
 
@@ -660,9 +665,11 @@ class ComponentsTable(CopyableTable):
         self._loading = True
         self.setRowCount(0)
         if result is not None:
+            specs = {s.label: s for s in result.specs}
             for comp in result.components:
                 r = self.rowCount()
                 self.insertRow(r)
+                spec = specs.get(comp.parent)
                 values = [
                     ("    " if comp.is_minor else "") + comp.label,
                     f"{comp.center:.3f}",
@@ -674,12 +681,29 @@ class ComponentsTable(CopyableTable):
                     f"{comp.fwhm_g:.3f}" if comp.fwhm_g is not None else "",
                     f"{comp.fwhm_l:.3f}" if comp.fwhm_l is not None else "",
                     f"{comp.asym:.3f}" if comp.asym is not None else "",
+                    "",
+                    "",
                 ]
                 for c, text in enumerate(values):
                     item = QTableWidgetItem(text)
                     item.setData(Qt.ItemDataRole.UserRole, comp.parent)
                     editable = (not comp.is_minor) and c in self.EDITABLE_COLUMNS
-                    if not editable:
+                    if c in LOCK_COLUMNS:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        if comp.is_minor or spec is None:
+                            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                        else:
+                            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                            vary = getattr(spec, LOCK_COLUMNS[c])
+                            item.setCheckState(
+                                Qt.CheckState.Unchecked if vary else Qt.CheckState.Checked
+                            )
+                            item.setToolTip(
+                                "Fix the centre at its value during refits"
+                                if c == 10
+                                else "Fix the widths (FWHM G / L or GL width) during refits"
+                            )
+                    elif not editable:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     elif c == 0:
                         item.setToolTip("Double-click to rename the component")
@@ -689,6 +713,21 @@ class ComponentsTable(CopyableTable):
                         )
                     self.setItem(r, c, item)
         self._loading = False
+
+    def set_lock(self, parent: str, field: str, locked: bool) -> bool:
+        """Tick or clear a lock box from code (same effect as clicking it)."""
+        col = next((c for c, f in LOCK_COLUMNS.items() if f == field), None)
+        if col is None:
+            return False
+        for r in range(self.rowCount()):
+            item = self.item(r, col)
+            if item is None or str(item.data(Qt.ItemDataRole.UserRole)) != parent:
+                continue
+            if not item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                return False
+            item.setCheckState(Qt.CheckState.Checked if locked else Qt.CheckState.Unchecked)
+            return True
+        return False
 
     def selected_parent(self) -> str | None:
         items = self.selectedItems()
@@ -712,6 +751,10 @@ class ComponentsTable(CopyableTable):
         if self._loading:
             return
         parent = str(item.data(Qt.ItemDataRole.UserRole))
+        if item.column() in LOCK_COLUMNS:
+            locked = item.checkState() == Qt.CheckState.Checked
+            self.componentLocked.emit(parent, LOCK_COLUMNS[item.column()], not locked)
+            return
         if item.column() == 0:
             new = item.text().strip()
             if new != parent:

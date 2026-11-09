@@ -379,7 +379,7 @@ def cmd_suggest(args: argparse.Namespace) -> int:
 
     spectra = read_spectra(args.file, photon_energy=args.photon_energy)
     survey = max(spectra, key=lambda s: s.range[1] - s.range[0])
-    elements = [e.strip() for e in args.elements.split(",")] if args.elements else None
+    elements = [e.strip() for e in args.elements.split(",") if e.strip()] if args.elements else None
     ident = identify_elements(
         survey,
         tolerance=args.tolerance,
@@ -466,7 +466,7 @@ def cmd_identify(args: argparse.Namespace) -> int:
 
     from .automation.identify import identify_elements, nearest_lines
 
-    elements = [e.strip() for e in args.elements.split(",")] if args.elements else None
+    elements = [e.strip() for e in args.elements.split(",") if e.strip()] if args.elements else None
     rc = 0
     for f in args.files:
         try:

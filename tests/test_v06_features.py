@@ -11,7 +11,13 @@ from xps_autofit.automation.identify import identify_elements
 from xps_autofit.automation.model_selection import select_model
 from xps_autofit.automation.suggest import suggest_recipe, suggest_regions
 from xps_autofit.cli import main
-from xps_autofit.export.plots import FIGURE_STYLES, plot_candidates, plot_fit
+from xps_autofit.export.plots import (
+    FIGURE_STYLES,
+    ORIGIN_FONTS,
+    origin_font_family,
+    plot_candidates,
+    plot_fit,
+)
 from xps_autofit.recipes import load_recipe, save_recipe
 from xps_autofit.synthetic import p3ht_s2p, synthesize, synthesize_survey
 
@@ -50,6 +56,11 @@ def test_origin_figure_has_box_axes_and_inward_ticks(s2p_selection, tmp_path):
     raw = next(line for line in ax.get_lines() if line.get_label() == "Raw")
     assert raw.get_markeredgecolor() == "#000000" and raw.get_markerfacecolor() == "none"
     assert not any(gl.get_visible() for gl in ax.get_xgridlines())
+    # fonts live on the artists, so the returned figure keeps them outside rc_context
+    family = origin_font_family()
+    assert family in ORIGIN_FONTS
+    assert ax.yaxis.get_label().get_fontfamily()[0] == family
+    assert ax.get_yticklabels()[0].get_fontfamily()[0] == family
     plt.close(fig)
     fig = plot_fit(result, style="classic")
     ax = fig.axes[0]

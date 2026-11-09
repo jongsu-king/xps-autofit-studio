@@ -75,6 +75,9 @@ class ComponentSpec:
     center_bounds: tuple[float, float] | None = None
     vary_center: bool = True
     fwhm_g_bounds: tuple[float, float] | None = None
+    vary_width: bool = True
+    """``False`` fixes every width parameter of this component (FWHM G, FWHM L or the
+    GL width) at the spec's value; the spin-orbit partner follows as usual."""
     doublet: DoubletSpec | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,6 +93,7 @@ class ComponentSpec:
             "center_bounds": list(self.center_bounds) if self.center_bounds else None,
             "vary_center": self.vary_center,
             "fwhm_g_bounds": list(self.fwhm_g_bounds) if self.fwhm_g_bounds else None,
+            "vary_width": self.vary_width,
             "doublet": self.doublet.to_dict() if self.doublet else None,
         }
 
@@ -109,6 +113,7 @@ class ComponentSpec:
             center_bounds=(float(cb[0]), float(cb[1])) if cb else None,
             vary_center=bool(d.get("vary_center", True)),
             fwhm_g_bounds=(float(fb[0]), float(fb[1])) if fb else None,
+            vary_width=bool(d.get("vary_width", True)),
             doublet=DoubletSpec.from_dict(d.get("doublet")),
         )
 
@@ -432,7 +437,11 @@ def build_parameters(
                 params.add(f"{p}_{w}", expr=first_shared[w])
             else:
                 params.add(
-                    f"{p}_{w}", value=_clip_inside(getattr(s, w), bmin, bmax), min=bmin, max=bmax
+                    f"{p}_{w}",
+                    value=_clip_inside(getattr(s, w), bmin, bmax),
+                    min=bmin,
+                    max=bmax,
+                    vary=s.vary_width,
                 )
                 if shared:
                     first_shared[w] = f"{p}_{w}"

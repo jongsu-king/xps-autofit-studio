@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -227,3 +228,144 @@ def _open_folder(folder: Path) -> None:
     from PySide6.QtGui import QDesktopServices
 
     QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+
+class PlotOptionsDialog(QDialog):
+    """Title, axis labels, fonts, symbol and line sizes, legend, fills and ranges of
+    the live plot.  Zero or empty means "as the plot style decides"."""
+
+    def __init__(self, options: Any, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Plot options")
+        self.title = QLineEdit(options.title)
+        self.title.setPlaceholderText("automatic (spectrum and region)")
+        self.x_label = QLineEdit(options.x_label)
+        self.x_label.setPlaceholderText("Binding energy (eV)")
+        self.y_label = QLineEdit(options.y_label)
+        self.y_label.setPlaceholderText("automatic (Intensity (unit))")
+        self.tick_pt = QSpinBox()
+        self.tick_pt.setRange(0, 24)
+        self.tick_pt.setSpecialValueText("style")
+        self.tick_pt.setValue(options.tick_font_pt)
+        self.label_pt = QSpinBox()
+        self.label_pt.setRange(0, 28)
+        self.label_pt.setSpecialValueText("style")
+        self.label_pt.setValue(options.label_font_pt)
+        self.symbol = QSpinBox()
+        self.symbol.setRange(0, 14)
+        self.symbol.setSpecialValueText("style")
+        self.symbol.setValue(options.symbol_size)
+        self.envelope = QDoubleSpinBox()
+        self.envelope.setRange(0.0, 6.0)
+        self.envelope.setSingleStep(0.2)
+        self.envelope.setSpecialValueText("style")
+        self.envelope.setValue(options.envelope_width)
+        self.fill = QSpinBox()
+        self.fill.setRange(-1, 100)
+        self.fill.setSpecialValueText("style")
+        self.fill.setSuffix(" %")
+        self.fill.setValue(options.fill_alpha)
+        self.legend = QCheckBox("Show legend")
+        self.legend.setChecked(options.show_legend)
+        self.fills = QCheckBox("Fill the components")
+        self.fills.setChecked(options.show_fills)
+        self.center_labels = QCheckBox("Label the centre lines")
+        self.center_labels.setChecked(options.show_center_labels)
+        self.x_auto = QCheckBox("automatic")
+        self.x_lo, self.x_hi = QDoubleSpinBox(), QDoubleSpinBox()
+        self.y_auto = QCheckBox("automatic")
+        self.y_lo, self.y_hi = QDoubleSpinBox(), QDoubleSpinBox()
+        for box in (self.x_lo, self.x_hi):
+            box.setRange(-10000.0, 10000.0)
+            box.setDecimals(2)
+        for box in (self.y_lo, self.y_hi):
+            box.setRange(-1e9, 1e9)
+            box.setDecimals(1)
+        self.x_auto.setChecked(options.x_range is None)
+        self.y_auto.setChecked(options.y_range is None)
+        if options.x_range:
+            self.x_lo.setValue(options.x_range[0])
+            self.x_hi.setValue(options.x_range[1])
+        if options.y_range:
+            self.y_lo.setValue(options.y_range[0])
+            self.y_hi.setValue(options.y_range[1])
+        for auto, boxes in (
+            (self.x_auto, (self.x_lo, self.x_hi)),
+            (self.y_auto, (self.y_lo, self.y_hi)),
+        ):
+            for b in boxes:
+                b.setEnabled(not auto.isChecked())
+            auto.toggled.connect(lambda on, bs=boxes: [b.setEnabled(not on) for b in bs])
+
+        form = QFormLayout()
+        form.addRow("Title", self.title)
+        form.addRow("X axis label", self.x_label)
+        form.addRow("Y axis label", self.y_label)
+        form.addRow("Tick label size (pt)", self.tick_pt)
+        form.addRow("Axis label size (pt)", self.label_pt)
+        form.addRow("Data symbol size", self.symbol)
+        form.addRow("Envelope line width", self.envelope)
+        form.addRow("Component fill opacity", self.fill)
+        x_row = QHBoxLayout()
+        x_row.addWidget(self.x_lo)
+        x_row.addWidget(self.x_hi)
+        x_row.addWidget(self.x_auto)
+        form.addRow("X range (eV)", x_row)
+        y_row = QHBoxLayout()
+        y_row.addWidget(self.y_lo)
+        y_row.addWidget(self.y_hi)
+        y_row.addWidget(self.y_auto)
+        form.addRow("Y range", y_row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.RestoreDefaults
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
+            self.restore_defaults
+        )
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(self.legend)
+        lay.addWidget(self.fills)
+        lay.addWidget(self.center_labels)
+        lay.addWidget(buttons)
+
+    def restore_defaults(self) -> None:
+        self.title.clear()
+        self.x_label.clear()
+        self.y_label.clear()
+        for box in (self.tick_pt, self.label_pt, self.symbol):
+            box.setValue(0)
+        self.envelope.setValue(0.0)
+        self.fill.setValue(-1)
+        for cb in (self.legend, self.fills, self.center_labels, self.x_auto, self.y_auto):
+            cb.setChecked(True)
+
+    def values(self) -> Any:
+        from .plot_widget import PlotOptions
+
+        def rng(
+            auto: QCheckBox, lo: QDoubleSpinBox, hi: QDoubleSpinBox
+        ) -> tuple[float, float] | None:
+            if auto.isChecked() or lo.value() == hi.value():
+                return None
+            return (min(lo.value(), hi.value()), max(lo.value(), hi.value()))
+
+        return PlotOptions(
+            title=self.title.text().strip(),
+            x_label=self.x_label.text().strip(),
+            y_label=self.y_label.text().strip(),
+            tick_font_pt=self.tick_pt.value(),
+            label_font_pt=self.label_pt.value(),
+            symbol_size=self.symbol.value(),
+            envelope_width=self.envelope.value(),
+            fill_alpha=self.fill.value(),
+            show_legend=self.legend.isChecked(),
+            show_fills=self.fills.isChecked(),
+            show_center_labels=self.center_labels.isChecked(),
+            x_range=rng(self.x_auto, self.x_lo, self.x_hi),
+            y_range=rng(self.y_auto, self.y_lo, self.y_hi),
+        )

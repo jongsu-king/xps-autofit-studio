@@ -137,8 +137,41 @@ def test_session_restore_tolerates_missing_files_and_bad_input(app, data_dir, tm
         assert "cannot open session" in fresh.log_panel.toPlainText()
         (tmp_path / "broken.xpsession").write_text("{", encoding="utf-8")
         assert fresh.open_session(tmp_path / "broken.xpsession") == []
+        # a spectrum that already has a fit keeps it unless asked otherwise
         report = restore_session(path, fresh.session)
-        assert report.keys == keys and report.messages == []
+        assert report.keys == keys and report.kept == keys and report.restored == []
+        assert any("kept the fit" in m for m in report.messages)
+        report = restore_session(path, fresh.session, replace_fits=True)
+        assert report.restored == keys and report.kept == []
+        # an exported project file is not a session file
+        project = fresh.export_current(tmp_path / "exp", ("json",))
+        assert project
+        project_json = next((tmp_path / "exp").glob("*.json"))
+        assert fresh.open_session(project_json) == []
+        assert "exported project file" in fresh.log_panel.toPlainText()
+        # malformed entries are skipped, not fatal
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["spectra"].append({"path": 12, "index": "x"})
+        data["spectra"].append("nonsense")
+        (tmp_path / "odd.xpsession").write_text(json.dumps(data), encoding="utf-8")
+        assert fresh.open_session(tmp_path / "odd.xpsession") == keys
+        assert "malformed spectrum entry" in fresh.log_panel.toPlainText()
+        data["spectra"] = {}
+        (tmp_path / "odd2.xpsession").write_text(json.dumps(data), encoding="utf-8")
+        assert fresh.open_session(tmp_path / "odd2.xpsession") == []
+        # a recipe file that disappears does not crash the recipe box
+        from xps_autofit.recipes import load_recipe, save_recipe
+
+        yaml_path = tmp_path / "temp_recipe.yaml"
+        save_recipe(load_recipe("p3ht"), yaml_path)
+        fresh.use_recipe_file(yaml_path)
+        assert fresh.session.recipe is not None and fresh.session.recipe.source == str(yaml_path)
+        yaml_path.unlink()
+        fresh.use_recipe("cu2o")
+        fresh.use_recipe_file(yaml_path)
+        assert fresh.session.recipe is None
+        assert "cannot load recipe" in fresh.log_panel.toPlainText()
+        assert fresh.settings.recipe_combo.currentIndex() == 0
     finally:
         fresh.close()
         fresh.deleteLater()

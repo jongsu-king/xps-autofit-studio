@@ -139,6 +139,12 @@ chooses how the live plot draws itself, independently of the theme:
 Both choices are remembered between sessions. Switching redraws the current fit
 with its draggable centre lines, element marks and title.
 
+*View > Plot options…* (Ctrl+Shift+P) edits what the style does not decide: a title
+that replaces the automatic one, the axis labels, tick and axis-label sizes, the
+data-symbol size, the envelope width, the component fill opacity, whether the
+legend, the fills and the centre-line labels are shown, and fixed x / y ranges.
+The settings persist and *Restore defaults* clears them.
+
 ![Light theme with the Origin-style plot](images/gui_light_theme.png)
 
 ![Dark theme with the instrument plot style](images/gui_plot_instrument.png)
@@ -153,6 +159,26 @@ background around its endpoint estimate (`algorithm.md`, section 1; 0 = free).
 The Models tab carries a **Grade** column (A-E) and the Diagnostics tab a QUALITY
 line with every deduction, and a PARAMETERS line with the largest cross-component
 correlation, the number of masked points and the loss in use.
+
+## Fixing parameters
+
+The Components table has two check-box columns, **Fix C** and **Fix W**. Ticking
+*Fix C* holds the centre of that component where it is (drag the line to put it
+somewhere else: the refit keeps it exactly there); *Fix W* holds its widths
+(FWHM G and L, or the GL width). Every change refits the other parameters, counts
+as a manual edit (undo works) and is written into the project and session files
+(`vary_center`, `vary_width` of the component spec), so a batch run from such a
+project reproduces the locked fit.
+
+## Saving the settings as a recipe
+
+*File > Save settings as recipe…* writes the panel's region for the current
+spectrum (range, background, shape, constraints, doublet, component counts) as a
+YAML recipe, together with the other regions of the recipe in use, so the file is
+complete for the sample. When the spectrum is fitted you can add the fitted
+components as candidate states (centre windows of ±0.5 eV) and fix the component
+count, which turns an interactively refined fit into a reproducible recipe for
+`batch`. The file is selected in the Recipe box at once.
 
 ## Session files
 

@@ -75,7 +75,7 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction; `suggest` turns the result into a recipe (regions around the measured lines, database doublets, Scofield RSFs, C 1s charge reference) |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu |
 | **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), per-run summaries; `verify` reproduces a project |
-| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), bootstrap, batch, export, element identification with recipe suggestion, session files, update notice |
+| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), fixable centres and widths per component, plot options (title, labels, fonts, ranges), "save settings as recipe", bootstrap, batch, export, element identification with recipe suggestion, session files, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
 ## Install
@@ -335,12 +335,17 @@ software. Readers for additional formats can be registered with
 - Origin-style and classic figures (box axes, tick direction, colours), recipe
   suggestion from a synthetic survey (regions, doublets, RSFs, charge reference,
   charged sample, command line) and session files (titles, shifts, fits, recipe
-  restored in a fresh window; missing files tolerated)
+  restored in a fresh window; missing files tolerated; project files rejected;
+  open fits kept)
+- parameter locks (fixed widths and centres survive a refit and a drag), plot
+  options (labels, fonts, legend, fills, ranges, persistence, dialog round trip)
+  and recipes saved from the settings panel (with the fitted components as
+  candidate states)
 - project save / load / verify, including robust fits
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (211 tests, about seven minutes). Comparisons with real instrument
+Run `pytest` to execute them (215 tests, about eight minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 

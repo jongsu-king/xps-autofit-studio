@@ -9,6 +9,7 @@ theme-following "instrument" style) and can be changed while a fit is shown.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,68 @@ from ..core.spectrum import Spectrum
 from .theme import PlotStyle, plot_style, rgba
 
 _AXES = ("left", "bottom", "top", "right")
+
+
+@dataclass(frozen=True)
+class PlotOptions:
+    """User adjustments on top of a :class:`PlotStyle` (View > Plot options…).
+
+    Empty strings, zeros and ``-1`` mean "as the style decides"; ranges of ``None``
+    mean automatic.
+    """
+
+    title: str = ""
+    x_label: str = ""
+    y_label: str = ""
+    tick_font_pt: int = 0
+    label_font_pt: int = 0
+    symbol_size: int = 0
+    envelope_width: float = 0.0
+    fill_alpha: int = -1
+    """Component fill opacity in percent (0-100), -1 for the style's value."""
+    show_legend: bool = True
+    show_fills: bool = True
+    show_center_labels: bool = True
+    x_range: tuple[float, float] | None = None
+    y_range: tuple[float, float] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d = asdict(self)
+        d["x_range"] = list(self.x_range) if self.x_range else None
+        d["y_range"] = list(self.y_range) if self.y_range else None
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any] | None) -> PlotOptions:
+        if not d:
+            return cls()
+        xr, yr = d.get("x_range"), d.get("y_range")
+        return cls(
+            title=str(d.get("title", "")),
+            x_label=str(d.get("x_label", "")),
+            y_label=str(d.get("y_label", "")),
+            tick_font_pt=int(d.get("tick_font_pt", 0)),
+            label_font_pt=int(d.get("label_font_pt", 0)),
+            symbol_size=int(d.get("symbol_size", 0)),
+            envelope_width=float(d.get("envelope_width", 0.0)),
+            fill_alpha=int(d.get("fill_alpha", -1)),
+            show_legend=bool(d.get("show_legend", True)),
+            show_fills=bool(d.get("show_fills", True)),
+            show_center_labels=bool(d.get("show_center_labels", True)),
+            x_range=(float(xr[0]), float(xr[1])) if xr else None,
+            y_range=(float(yr[0]), float(yr[1])) if yr else None,
+        )
+
+    def applied_to(self, style: PlotStyle) -> PlotStyle:
+        """The style with this object's size overrides."""
+        return replace(
+            style,
+            tick_font_pt=self.tick_font_pt or style.tick_font_pt,
+            label_font_pt=self.label_font_pt or style.label_font_pt,
+            symbol_size=self.symbol_size or style.symbol_size,
+            envelope_width=self.envelope_width or style.envelope_width,
+            fill_alpha=round(self.fill_alpha * 2.55) if self.fill_alpha >= 0 else style.fill_alpha,
+        )
 
 
 def background_label(result: FitResult) -> str:
@@ -40,10 +103,18 @@ class SpectrumPlot(QWidget):
     cursorMoved = Signal(float, float)
     """Mouse position in data coordinates: (binding energy, intensity)."""
 
-    def __init__(self, parent: QWidget | None = None, style: PlotStyle | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        style: PlotStyle | None = None,
+        options: PlotOptions | None = None,
+    ) -> None:
         super().__init__(parent)
         self.look: PlotStyle = style or plot_style()
         """The active :class:`PlotStyle` (``style`` would shadow ``QWidget.style()``)."""
+        self.options: PlotOptions = options or PlotOptions()
+        self._eff: PlotStyle = self.options.applied_to(self.look)
+        """``look`` with the options' size overrides; what the drawing code reads."""
         self.view = pg.GraphicsLayoutWidget()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -98,6 +169,15 @@ class SpectrumPlot(QWidget):
         """Switch the look and redraw whatever is shown."""
         self.look = style
         self._apply_style()
+        self._replay()
+
+    def set_options(self, options: PlotOptions) -> None:
+        """Apply user adjustments (title, labels, sizes, legend, fills, ranges)."""
+        self.options = options
+        self._apply_style()
+        self._replay()
+
+    def _replay(self) -> None:
         if self._last is not None:
             method, args, kwargs = self._last
             marks = list(self._mark_spec)
@@ -108,9 +188,14 @@ class SpectrumPlot(QWidget):
             self.set_title(title)
 
     def _apply_style(self) -> None:
-        s = self.look
+        self._eff = self.options.applied_to(self.look)
+        s = self._eff
         self.view.setBackground(s.canvas)
-        font = QFont(s.font_family, s.tick_font_pt) if s.font_family else None
+        font: QFont | None = None
+        if s.font_family or s.tick_font_pt:
+            font = QFont(s.font_family) if s.font_family else QFont()
+            if s.tick_font_pt:
+                font.setPointSize(s.tick_font_pt)
         for p in (self.main, self.resid):
             for name in _AXES:
                 ax = p.getAxis(name)
@@ -132,22 +217,31 @@ class SpectrumPlot(QWidget):
         self.legend.setLabelTextColor(s.text)
         self.legend.setPen(pg.mkPen(s.legend_pen) if s.legend_pen else pg.mkPen(None))
         self.legend.setBrush(pg.mkBrush(*s.legend_fill))
+        self.legend.setVisible(self.options.show_legend)
+        self.view.ci.layout.setColumnFixedWidth(1, 200 if self.options.show_legend else 0)
         for item in (self._cross_main, self._cross_resid):
             item.setPen(pg.mkPen(s.crosshair, width=1))
-        self.main.setTitle(self._title, color=s.text, size="11pt")
+        self.set_title(self._title)
 
     def _set_label(self, which: str, axis: str, text: str) -> None:
+        """Set an axis label; the options' x / y labels override the automatic text."""
         self._labels[(which, axis)] = text
-        s = self.look
+        s = self._eff
+        o = self.options
+        if which == "main" and axis == "left" and o.y_label:
+            text = o.y_label
+        elif which == "resid" and axis == "bottom" and o.x_label:
+            text = o.x_label
         plot = self.main if which == "main" else self.resid
         extra: dict[str, str] = {"color": s.text}
         if s.font_family:
             extra["font-family"] = s.font_family
+        if s.label_font_pt:
             extra["font-size"] = f"{s.label_font_pt}pt"
         plot.setLabel(axis, text, **extra)
 
     def _series_color(self, index: int) -> str:
-        return self.look.series[index % len(self.look.series)]
+        return self._eff.series[index % len(self._eff.series)]
 
     # ------------------------------------------------------------------ helpers
     def _reset(self) -> None:
@@ -252,7 +346,7 @@ class SpectrumPlot(QWidget):
         self._fit_view(spectrum.energy)
 
     def _draw_raw(self, x: np.ndarray, y: np.ndarray) -> None:
-        s = self.look
+        s = self._eff
         self.main.plot(
             x,
             y,
@@ -268,7 +362,7 @@ class SpectrumPlot(QWidget):
         self._last = ("show_result", (result, title, draggable), {})
         self._reset()
         self._view_x = None
-        s = self.look
+        s = self._eff
         x = result.x
         bg = result.background_total
         self._spectrum = Spectrum(x, result.y)
@@ -292,8 +386,11 @@ class SpectrumPlot(QWidget):
                 self.main.plot(x, y, pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DotLine))
                 continue
             curve = self.main.plot(x, y, pen=pg.mkPen(color, width=1.5), name=comp.label)
-            fill = pg.FillBetweenItem(bg_curve, curve, brush=pg.mkBrush(*rgba(color, s.fill_alpha)))
-            self.main.addItem(fill)
+            if self.options.show_fills:
+                fill = pg.FillBetweenItem(
+                    bg_curve, curve, brush=pg.mkBrush(*rgba(color, s.fill_alpha))
+                )
+                self.main.addItem(fill)
             if draggable:
                 line = pg.InfiniteLine(
                     pos=comp.center,
@@ -301,7 +398,11 @@ class SpectrumPlot(QWidget):
                     movable=True,
                     pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashDotLine),
                     hoverPen=pg.mkPen(color, width=2),
-                    label=f"{comp.label}\n{{value:.2f}} eV",
+                    label=(
+                        f"{comp.label}\n{{value:.2f}} eV"
+                        if self.options.show_center_labels
+                        else None
+                    ),
                     labelOpts={
                         "position": 0.95 - 0.08 * (slot[comp.parent] % 5),
                         "color": color,
@@ -332,18 +433,29 @@ class SpectrumPlot(QWidget):
         self._fit_view(x)
 
     def set_title(self, title: str) -> None:
-        """Change the plot title without redrawing (after a rename)."""
+        """Change the plot title without redrawing (after a rename); the options'
+        title, when set, is shown instead."""
         self._title = title
-        self.main.setTitle(title, color=self.look.text, size="11pt")
+        shown = self.options.title or title
+        self.main.setTitle(shown, color=self._eff.text, size="11pt")
 
     def _fit_view(self, x: np.ndarray) -> None:
         """Fix the x range from the data and auto-scale y; pyqtgraph's deferred
-        auto-range otherwise alternates with the empty range left by ``clear()``."""
+        auto-range otherwise alternates with the empty range left by ``clear()``.
+        Ranges given in the options replace the automatic ones."""
         lo, hi = float(np.min(x)), float(np.max(x))
         for p in (self.main, self.resid):
             vb = p.getViewBox()
             vb.autoRange(padding=0.04)
             vb.setXRange(lo, hi, padding=0.02)
+        o = self.options
+        if o.x_range is not None:
+            # Linked views with different axis widths differ slightly; the one set
+            # last is exact, so the main plot goes last.
+            for p in (self.resid, self.main):
+                p.getViewBox().setXRange(*o.x_range, padding=0.0)
+        if o.y_range is not None:
+            self.main.getViewBox().setYRange(*o.y_range, padding=0.0)
 
     def line_positions(self) -> dict[str, float]:
         return {label: float(line.value()) for label, line in self._lines.items()}
@@ -354,7 +466,7 @@ class SpectrumPlot(QWidget):
             self.main.removeItem(item)
         self._marks = []
         self._mark_spec = list(marks)
-        pen_color = color or self.look.text
+        pen_color = color or self._eff.text
         for i, (label, energy) in enumerate(marks):
             line = pg.InfiniteLine(
                 pos=energy,
@@ -365,7 +477,7 @@ class SpectrumPlot(QWidget):
                 labelOpts={
                     "position": 0.92 - 0.06 * (i % 8),
                     "color": pen_color,
-                    "fill": self.look.label_fill,
+                    "fill": self._eff.label_fill,
                     "anchors": [(1, 0.5), (0, 0.5)],
                 },
             )

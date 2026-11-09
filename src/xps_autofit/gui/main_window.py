@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 import traceback
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,8 @@ from ..automation.suggest import suggest_recipe
 from ..core.constraints import check_physical
 from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_result
 from ..core.preprocessing import C1S_REFERENCE_WARNING
+from ..core.quantification import QuantCorrection
+from ..core.region import CandidateLine
 from ..core.uncertainty import BootstrapResult, bootstrap
 from ..readers import supported_extensions
 from ..recipes import Recipe, builtin_recipe_names, load_recipe, save_recipe
@@ -47,7 +51,7 @@ from ..update_check import (
     check_for_update,
     disabled_by_environment,
 )
-from .dialogs import BatchDialog, ExportDialog, TableDialog
+from .dialogs import BatchDialog, ExportDialog, PlotOptionsDialog, TableDialog
 from .panels import (
     ComponentsTable,
     CompositionPanel,
@@ -58,9 +62,9 @@ from .panels import (
     SampleTree,
     StatusLamp,
 )
-from .plot_widget import SpectrumPlot
+from .plot_widget import PlotOptions, SpectrumPlot
 from .session import RegionState, Session
-from .session_file import SESSION_SUFFIX, restore_session, save_session
+from .session_file import SESSION_SUFFIX, restore_session, save_session, session_dict
 from .theme import (
     DEFAULT_PLOT_STYLE,
     DEFAULT_THEME,
@@ -122,7 +126,9 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if isinstance(app, QApplication) and current().name != self._theme:
             apply_theme(app, self._theme)
-        self.plot = SpectrumPlot(style=plot_style(self._plot_style))
+        self.plot = SpectrumPlot(
+            style=plot_style(self._plot_style), options=self._load_plot_options()
+        )
         self.setCentralWidget(self.plot)
 
         # ---- left dock: samples
@@ -188,6 +194,7 @@ class MainWindow(QMainWindow):
         self.plot.centerDragged.connect(self._on_center_dragged)
         self.plot.cursorMoved.connect(self._on_cursor_moved)
         self.components.componentEdited.connect(self._on_component_edited)
+        self.components.componentLocked.connect(self._on_component_locked)
         self.components.componentRenamed.connect(self.rename_component)
         self.models.modelPicked.connect(self._show_model)
         self.settings.recipe_combo.currentIndexChanged.connect(self._on_recipe_combo)
@@ -238,6 +245,18 @@ class MainWindow(QMainWindow):
         self.act_open_session.setShortcut("Ctrl+Shift+O")
         self.act_open_session.setToolTip("Reload the files of a session and rebuild its fits")
         self.act_open_session.triggered.connect(self.open_session_dialog)
+        self.act_save_recipe = QAction("Save settings as recipe…", self)
+        self.act_save_recipe.setToolTip(
+            "Write the panel's region (optionally with the fitted components as candidate "
+            "states) and the other regions of the current recipe to a YAML recipe"
+        )
+        self.act_save_recipe.triggered.connect(self.save_recipe_dialog)
+        self.act_plot_options = QAction("Plot options…", self)
+        self.act_plot_options.setShortcut("Ctrl+Shift+P")
+        self.act_plot_options.setToolTip(
+            "Title, axis labels, font and symbol sizes, legend, fills and axis ranges"
+        )
+        self.act_plot_options.triggered.connect(self.plot_options_dialog)
         self.act_fit = QAction("AUTO FIT", self)
         self.act_fit.setShortcut("F5")
         self.act_fit.triggered.connect(lambda: self.auto_fit())
@@ -346,6 +365,7 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         m_file.addAction(self.act_open_session)
         m_file.addAction(self.act_save_session)
+        m_file.addAction(self.act_save_recipe)
         m_file.addSeparator()
         m_file.addAction(self.act_remove_spectrum)
         m_file.addSeparator()
@@ -423,6 +443,7 @@ class MainWindow(QMainWindow):
             self.plot_style_group.addAction(action)
             m_style.addAction(action)
             self.plot_style_actions[name] = action
+        m_view.addAction(self.act_plot_options)
         m_help = self.menuBar().addMenu("&Help")
         self.act_check_updates = QAction("Check for updates…", self)
         self.act_check_updates.triggered.connect(lambda: self.check_for_updates(manual=True))
@@ -472,7 +493,8 @@ class MainWindow(QMainWindow):
         action = getattr(self, "theme_actions", {}).get(name)
         if action is not None and not action.isChecked():
             action.setChecked(True)
-        self.plot.set_style(plot_style(self.plot_style_name(), current()))
+        if self.plot_style_name() == "instrument":  # the origin look does not follow the theme
+            self.plot.set_style(plot_style("instrument", current()))
         self.log(f"theme: {name}")
         return name
 
@@ -660,6 +682,110 @@ class MainWindow(QMainWindow):
         self.log_panel.log(text)
 
     # ------------------------------------------------------------------ files
+    # -------------------------------------------------------------- plot options
+    def _load_plot_options(self) -> PlotOptions:
+        raw = self.settings_store.value("ui/plot_options", "")
+        if not raw:
+            return PlotOptions()
+        try:
+            return PlotOptions.from_dict(json.loads(str(raw)))
+        except (ValueError, TypeError, KeyError):
+            return PlotOptions()
+
+    def plot_options_dialog(self) -> None:
+        dlg = PlotOptionsDialog(self.plot.options, self)
+        if dlg.exec():
+            self.apply_plot_options(dlg.values())
+
+    def apply_plot_options(self, options: PlotOptions, persist: bool = True) -> None:
+        """Title, labels, sizes, legend, fills and ranges of the live plot."""
+        self.plot.set_options(options)
+        if persist:
+            self.settings_store.setValue("ui/plot_options", json.dumps(options.to_dict()))
+        changed = [k for k, v in options.to_dict().items() if v != getattr(PlotOptions(), k)]
+        self.log("plot options: " + (", ".join(changed) if changed else "defaults"))
+
+    # ------------------------------------------------------------- recipe saving
+    def save_recipe_dialog(self) -> None:
+        cur = self.current()
+        if cur is None:
+            self.log("select a spectrum first: the recipe is built from its panel settings")
+            return
+        key, item = cur
+        default = Path(str(self.settings_store.value("last_dir", str(Path.home()))))
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save settings as recipe",
+            str(default / f"{item.path.stem}_recipe.yaml"),
+            "Recipe (*.yaml)",
+        )
+        if not path:
+            return
+        include = False
+        st = self.session.results.get(key)
+        if st is not None and st.result is not None:
+            answer = QMessageBox.question(
+                self,
+                "Candidate states",
+                "Add the fitted components as candidate states (centre windows of "
+                "±0.5 eV) and fix the component count?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            include = answer == QMessageBox.StandardButton.Yes
+        self.save_recipe_file(path, include_components=include)
+
+    def save_recipe_file(self, path: str | Path, include_components: bool = False) -> Recipe | None:
+        """Write the panel's region for the current spectrum as a recipe and select it.
+
+        The other regions of the recipe in use are carried over, so the file is a
+        complete recipe for the sample.  With ``include_components`` the fitted
+        components become candidate states (±0.5 eV) and the component count is fixed.
+        """
+        cur = self.current()
+        if cur is None:
+            self.log("select a spectrum first: the recipe is built from its panel settings")
+            return None
+        key, item = cur
+        region = self.settings.region_spec(item.spectrum)
+        st = self.session.results.get(key)
+        if include_components and st is not None and st.result is not None:
+            majors = st.result.majors()
+            region.candidates = [
+                CandidateLine(label=c.label, center=c.center, window=0.5, note="fitted component")
+                for c in majors
+            ]
+            region.min_components = region.max_components = max(len(majors), 1)
+        base = self.session.recipe
+        regions = [region]
+        if base is not None:
+            regions = [region if r.name == region.name else r for r in base.regions]
+            if all(r.name != region.name for r in base.regions):
+                regions.append(region)
+        p = Path(path)
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d")
+        recipe = Recipe(
+            name=p.stem,
+            description=f"Saved from XPS AutoFit Studio {__version__} on {stamp}"
+            + (f", based on {base.name}" if base is not None else "")
+            + f"; region {region.name!r} from the settings panel"
+            + (" with the fitted components as candidates" if include_components else ""),
+            photon_energy=(base.photon_energy if base is not None and base.photon_energy else None)
+            or item.spectrum.photon_energy,
+            charge_reference=base.charge_reference if base is not None else None,
+            regions=regions,
+            source=str(p),
+            references=list(base.references) if base is not None else [],
+            quantification=base.quantification if base is not None else QuantCorrection(),
+        )
+        save_recipe(recipe, p)
+        self.log(
+            f"recipe {p.name}: {len(regions)} region(s); {region.name} from the panel"
+            + (f" with {len(region.candidates)} candidate states" if include_components else "")
+        )
+        self.use_recipe_file(p)
+        return recipe
+
     # ------------------------------------------------------------- session files
     def save_session_dialog(self) -> None:
         if not self.session.order:
@@ -677,9 +803,14 @@ class MainWindow(QMainWindow):
 
     def save_session(self, path: str | Path) -> Path:
         """Write the open files, titles, shifts, recipe and fits to a session file."""
-        p = save_session(path, self.session)
-        n_fits = sum(1 for k in self.session.order if self.session.state(k).result is not None)
+        data = session_dict(self.session)
+        p = save_session(path, self.session, data)
+        n_fits = sum(1 for e in data["spectra"] if "result" in e)
         self.log(f"session saved: {p.name} ({len(self.session.order)} spectra, {n_fits} fits)")
+        for name in data.get("unsaved", []):
+            self.log(
+                f"  {name}: its manual result has no automatic fit behind it and was not saved"
+            )
         self.settings_store.setValue("last_dir", str(p.parent))
         return p
 
@@ -691,14 +822,15 @@ class MainWindow(QMainWindow):
         if path:
             self.open_session(path)
 
-    def open_session(self, path: str | Path) -> list[str]:
+    def open_session(self, path: str | Path, replace_fits: bool = False) -> list[str]:
         """Reload a session: files, titles, shifts, recipe, and every stored fit.
 
+        Spectra that already have a fit here keep it unless ``replace_fits`` is true.
         Returns the keys of the spectra the session refers to that are now open.
         """
         try:
-            report = restore_session(path, self.session, self.log)
-        except (OSError, ValueError, KeyError) as exc:
+            report = restore_session(path, self.session, self.log, replace_fits=replace_fits)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             self.log(f"cannot open session {Path(path).name}: {exc}")
             return []
         recipe = report.recipe or {}
@@ -709,11 +841,8 @@ class MainWindow(QMainWindow):
             self.use_recipe_file(source)
         elif recipe.get("name"):
             self.log(f"recipe {recipe['name']!r} of the session is not available here")
-        self._refresh_tree()
-        for key in report.keys:
-            st = self.session.results.get(key)
-            if st is not None:
-                self.tree.set_status(key, st.status)
+        # restore_session emitted spectraChanged (tree rebuilt with statuses) and
+        # resultChanged for every rebuilt fit; nothing to redraw here but the selection.
         if report.keys:
             self.select_key(report.restored[0] if report.restored else report.keys[0])
         self._remember_recent(list(dict.fromkeys(k.rsplit("#", 1)[0] for k in report.keys)))
@@ -1136,7 +1265,16 @@ class MainWindow(QMainWindow):
 
     def _on_recipe_combo(self, _index: int) -> None:
         name = self.settings.recipe_combo.currentData()
-        recipe = load_recipe(str(name)) if name else None
+        try:
+            recipe = load_recipe(str(name)) if name else None
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # a recipe file added from disk may have been deleted or edited since
+            self.log(f"cannot load recipe {name}: {exc}")
+            combo = self.settings.recipe_combo
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+            recipe = None
         self.session.recipe = recipe
         self.settings.set_recipe(recipe)
         cur = self.current()
@@ -1295,6 +1433,23 @@ class MainWindow(QMainWindow):
         self.log(f"{label}: centre moved to {energy:.3f} eV")
         if self.settings.auto_refit.isChecked():
             self.refit(specs)
+
+    def _on_component_locked(self, label: str, field: str, vary: bool) -> None:
+        """Fix or free a component's centre (``vary_center``) or widths (``vary_width``)
+        and refit so the other parameters adapt."""
+        cur = self.current()
+        if cur is None:
+            return
+        pair = self._manual_specs(cur[0])
+        if pair is None:
+            return
+        _state, specs = pair
+        for s in specs:
+            if s.label == label:
+                setattr(s, field, vary)
+        what = "centre" if field == "vary_center" else "widths"
+        self.log(f"{label}: {what} {'free' if vary else 'fixed'}")
+        self.refit(specs)
 
     def _on_component_edited(self, label: str, field: str, value: float) -> None:
         cur = self.current()

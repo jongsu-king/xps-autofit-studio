@@ -11,6 +11,7 @@ and open left/bottom axes.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import matplotlib.font_manager as fm  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 
@@ -96,9 +98,27 @@ _CLASSIC = _Look(
 )
 
 
+@lru_cache(maxsize=1)
+def origin_font_family() -> str:
+    """The first of :data:`ORIGIN_FONTS` installed here (``DejaVu Sans`` at worst).
+
+    Resolved once so that artists can be given a single existing family: a list on
+    an artist makes Matplotlib log a warning for every family it skips.
+    """
+    for name in ORIGIN_FONTS:
+        try:
+            fm.findfont(fm.FontProperties(family=name), fallback_to_default=False)
+        except ValueError:
+            continue
+        return name
+    return "DejaVu Sans"
+
+
 def _rc(style: str) -> Any:
     """rcParams overrides for a style (typed loosely: Matplotlib's keys are literals)."""
-    return ORIGIN_RC if style == "origin" else {}
+    if style != "origin":
+        return {}
+    return {**ORIGIN_RC, "font.sans-serif": [origin_font_family(), *ORIGIN_FONTS]}
 
 
 def _check_style(style: str) -> str:
@@ -156,12 +176,18 @@ def _plot_fit(
     style: str,
 ) -> Figure:
     look = _ORIGIN if style == "origin" else _CLASSIC
+    # Fonts are set on the artists too, not only through rcParams: a figure returned
+    # without saving is drawn after the rc context has ended.
+    family = origin_font_family() if style == "origin" else None
+    font: dict[str, Any] = {"fontfamily": family} if family else {}
     fig, (ax, axr) = plt.subplots(
         2, 1, figsize=figsize, sharex=True, gridspec_kw={"height_ratios": [4, 1], "hspace": 0.05}
     )
     fig.patch.set_facecolor(look.surface)
     for a in (ax, axr):
         _style_axes(a, style, look.surface)
+        if family:
+            a.tick_params(labelfontfamily=family)
 
     x = result.x
     bg = result.background_total
@@ -204,17 +230,24 @@ def _plot_fit(
                     ha="center",
                     fontsize=7,
                     color=look.text,
+                    **font,
                 )
     ax.plot(x, result.model, color=look.envelope, lw=1.4, label="Envelope", zorder=5)
-    ax.set_ylabel(f"Intensity ({_unit_label(result)})", fontsize=9, color=look.text)
-    legend_kwargs: dict[str, Any] = {"fontsize": 7, "loc": "upper left"}
+    ax.set_ylabel(f"Intensity ({_unit_label(result)})", fontsize=9, color=look.text, **font)
+    legend_kwargs: dict[str, Any] = {"loc": "upper left"}
     if style == "origin":
-        legend_kwargs.update(frameon=True, edgecolor="black", framealpha=1.0, fancybox=False)
+        legend_kwargs.update(
+            frameon=True,
+            edgecolor="black",
+            framealpha=1.0,
+            fancybox=False,
+            prop={"family": family, "size": 7},
+        )
     else:
-        legend_kwargs["frameon"] = False
+        legend_kwargs.update(frameon=False, fontsize=7)
     ax.legend(**legend_kwargs)
     if title:
-        ax.set_title(title, fontsize=10, color=look.text, loc="left")
+        ax.set_title(title, fontsize=10, color=look.text, loc="left", **font)
     stats = result.stats
     ax.text(
         0.99,
@@ -225,14 +258,15 @@ def _plot_fit(
         va="top",
         fontsize=7,
         color=look.text,
+        **font,
     )
 
     axr.axhline(0, color=look.background, lw=0.8)
     if result.sigma is not None:
         axr.fill_between(x, -result.sigma, result.sigma, color=look.sigma, lw=0, label="±1σ")
     axr.plot(x, result.residual, color=look.residual, lw=0.9)
-    axr.set_ylabel("Residual", fontsize=8, color=look.text)
-    axr.set_xlabel("Binding energy (eV)", fontsize=9, color=look.text)
+    axr.set_ylabel("Residual", fontsize=8, color=look.text, **font)
+    axr.set_xlabel("Binding energy (eV)", fontsize=9, color=look.text, **font)
     axr.invert_xaxis()
     fig.align_ylabels([ax, axr])
     if path is not None:
