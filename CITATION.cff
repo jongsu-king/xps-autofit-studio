@@ -3,9 +3,9 @@ message: "If you use this software, please cite it as below."
 title: "XPS AutoFit Studio"
 abstract: "Automated, reproducible XPS peak fitting with physical constraints, statistical model selection and batch processing."
 type: software
-version: 0.5.0
-date-released: 2026-11-09
-doi: 10.5281/zenodo.24071089
+version: 0.6.0
+date-released: 2026-11-10
+doi: 10.5281/zenodo.24071088
 identifiers:
   - type: doi
     value: 10.5281/zenodo.24071088

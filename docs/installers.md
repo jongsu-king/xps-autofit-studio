@@ -9,7 +9,7 @@ the engine; nothing else needs to be installed.
 | Windows 10/11 x64 | `XPS-AutoFit-Studio-<version>-Windows-x64-Setup.exe` | Run the installer. Start-menu entry "XPS AutoFit Studio"; optional desktop icon and "add xps-autofit to PATH" |
 | Windows (portable) | `XPS-AutoFit-Studio-<version>-Windows-x64.zip` | Unzip anywhere, run `XPS AutoFit Studio.exe` or `xps-autofit.exe` |
 | macOS 12+ (Apple silicon) | `XPS-AutoFit-Studio-<version>-macOS-arm64.dmg` | Open the DMG and drag the app to Applications |
-| macOS 12+ (Intel) | `XPS-AutoFit-Studio-<version>-macOS-x86_64.dmg` | Same, for Macs with an Intel processor (from the release after 0.5.0) |
+| macOS 12+ (Intel) | `XPS-AutoFit-Studio-<version>-macOS-x86_64.dmg` | Same, for Macs with an Intel processor (from 0.6.0) |
 | Debian / Ubuntu x64 | `xps-autofit-studio_<version>_amd64.deb` | `sudo apt install ./xps-autofit-studio_<version>_amd64.deb` - installs `/opt/xps-autofit-studio`, the commands `xps-autofit-studio` and `xps-autofit`, and a desktop entry |
 | Linux (portable) | `XPS-AutoFit-Studio-<version>-Linux-x86_64.tar.gz` | Extract and run `./XPS AutoFit Studio` or `./xps-autofit` |
 
@@ -22,7 +22,7 @@ Check for updates at startup* is on; one anonymous request, the User-Agent carri
 only the version).
 
 **Automatic installation** (*Help > Install updates automatically*, on by default;
-from the release after 0.5.0). In a copy installed from one of the release files,
+from 0.6.0). In a copy installed from one of the release files,
 a newer release is downloaded in the background, its SHA-256 is compared with the
 release's `SHA256SUMS.txt` (a mismatch deletes the file and nothing is installed),
 and it is installed when you close the program - or at once if you answer *Yes* to

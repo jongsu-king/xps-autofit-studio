@@ -369,8 +369,9 @@ if you can share measured spectra for that, please open a discussion.
 | 2 | v0.2.0 | PySide6 + PyQtGraph desktop app, interactive peak editing |
 | 3 | v0.3.0 | Active backgrounds, Doniach-Šunjić line, residual diagnostics, bootstrap composition errors, diagnostics / uncertainty in the app, installers |
 | 3 | v0.4.0 | Robust loss and spike mask, parameter correlations, quality grade, survey element identification, update notice |
-| 3 | v0.5.0 | Composition tab, charge alignment, FIT ALL, undo/redo, comparison view with stacked series, bounded active background, GL product line, energy-dependent quantification correction (this release) |
-| 3 | v0.6.0 | Session files, recipe suggestion from a survey, Origin-style figures and plot (on `main`); instrument RSF libraries, depth-profile composition vs cycle |
+| 3 | v0.5.0 | Composition tab, charge alignment, FIT ALL, undo/redo, comparison view with stacked series, bounded active background, GL product line, energy-dependent quantification correction |
+| 3 | v0.6.0 | Session files, recipe suggestion from a survey, Origin-style figures and plot, Origin export, parameter locks, plot options, automatic installation of updates, Intel Mac build (this release) |
+| 3 | v0.7.0 | Instrument RSF libraries, depth-profile composition vs cycle |
 | 4 | v1.0.0 | Validation against measured data and other software |
 | 5 | v2.0 | PCA / multivariate analysis, large batches, model recommendation |
 

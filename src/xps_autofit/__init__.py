@@ -7,7 +7,7 @@ desktop application.
 
 from __future__ import annotations
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 from .core.background import BackgroundSpec, compute_background
 from .core.constraints import DoubletSpec, PeakConstraints

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-10
+
 ### Added - Origin
 - **Files OriginLab Origin opens as a labelled workbook** (`export/origin.py`):
   CSV with Origin's three label rows (Long Name, Units, Comments) above the data,
