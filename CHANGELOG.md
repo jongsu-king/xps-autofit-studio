@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.6.0] - 2026-11-10
 
+Version DOI: https://doi.org/10.5281/zenodo.24096285 (concept DOI for all versions: 10.5281/zenodo.24071088).
+
 ### Added - Origin
 - **Files OriginLab Origin opens as a labelled workbook** (`export/origin.py`):
   CSV with Origin's three label rows (Long Name, Units, Comments) above the data,

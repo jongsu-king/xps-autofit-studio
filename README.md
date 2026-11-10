@@ -384,7 +384,8 @@ data cite a source). Questions and fitting advice go to
 `CITATION.cff` has the citation metadata (GitHub shows a *Cite this repository*
 button). Every release is archived on Zenodo: the concept DOI
 [10.5281/zenodo.24071088](https://doi.org/10.5281/zenodo.24071088) always resolves
-to the latest version, and each release has its own DOI (0.5.0:
+to the latest version, and each release has its own DOI (0.6.0:
+[10.5281/zenodo.24096285](https://doi.org/10.5281/zenodo.24096285); 0.5.0:
 [10.5281/zenodo.24071089](https://doi.org/10.5281/zenodo.24071089)).
 
 ## 한국어 요약
