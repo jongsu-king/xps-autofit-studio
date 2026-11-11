@@ -321,6 +321,38 @@ absent element is reported; the Bi/S overlap is reported as ambiguous. Real surv
 add satellites, plasmons and charging, so the result is a shortlist to confirm with
 high-resolution regions, never an assignment.
 
+### Composition from the survey
+
+`identify --quantify` (and IDENTIFY in the application) estimates the composition
+from the survey itself (`automation/survey_quant.py`). For every element above
+the confidence threshold (0.5) one line is used: the strongest matched
+photoelectron line whose integration window holds no line of another identified
+element (the strongest line otherwise, with the overlap reported). The window is
+2.5 peak widths on each side of the measured peak, at least 3 eV, so it follows a
+charged sample; lines of the same element inside it (Au 4f5/2 next to 4f7/2) are
+integrated together and their relative intensities summed. A Shirley background
+between the window ends is subtracted, the area divided by the summed relative
+intensity (Scofield-like, C 1s = 1) and, when exponents are given, by
+`KE^(a + b)` as in section 12, and the results normalised to 100 %. With counts the
+area carries its Poisson error, propagated to first order into the shares.
+
+On four synthetic surveys (Cu/O/C/N, Au/C/O, Si/O/C, Ti/O/C/N) the shares come back
+within 6 % relative (most within 2 %). That checks the window, background and
+arithmetic: the synthetic spectra are built from the same relative intensities. On
+real surveys expect 10-20 % relative - the instrument's sensitivity factors,
+satellites, inelastic tails and the survey's coarse step all differ - and fit
+high-resolution regions for the numbers to report.
+
+### Composition series
+
+`automation/series.py` collects the composition of several samples (depth-profile
+cycles, ageing times, a batch) into one table: one row per sample in natural order
+of the names (`cycle2` before `cycle10`), one atomic-percent column per element
+(regions of the same element summed) with its standard deviation when bootstrap
+replicates exist, and the samples without a composition kept as empty rows.
+`batch` writes it as `summary_series.csv` with `composition_series.png` (and an
+Origin file with `--formats origin`) whenever two or more files have a composition.
+
 ## 12. Quantification
 
 The relative composition of a sample uses one area per region - the doublet total

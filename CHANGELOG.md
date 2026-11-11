@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Composition from the survey** (`automation/survey_quant.py`,
+  `xps-autofit identify --quantify`, IDENTIFY in the app): one line per identified
+  element - the strongest matched photoelectron line free of other elements' lines -
+  integrated over a window of 2.5 peak widths around the measured peak above a
+  Shirley background, divided by the survey table's relative intensity (spin-orbit
+  partners inside the window included) and optionally by `KE^(a+b)`; Poisson errors
+  propagated to the shares. On four synthetic surveys the shares come back within
+  6 % relative. The app shows the estimate in the Composition tab of a survey without
+  fitted regions; the note says it is a survey estimate.
+- **Composition series** (`automation/series.py`): the compositions of many
+  samples in one table (natural order of the names, one column per element, regions
+  of one element summed, missing samples kept). `batch` writes `summary_series.csv`
+  and `composition_series.png` (plus `summary_series_origin.csv` with
+  `--formats origin`) when two or more files have a composition; the app's
+  **Analysis > Composition series…** (Ctrl+Shift+T) shows the table and a plot of
+  atomic percent against the sample, with CSV and Origin export.
+- `plot_series` draws the series in the Origin-style (or classic) figure look.
+
 ## [0.6.0] - 2026-11-10
 
 Version DOI: https://doi.org/10.5281/zenodo.24096285 (concept DOI for all versions: 10.5281/zenodo.24071088).

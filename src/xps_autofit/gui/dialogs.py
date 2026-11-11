@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -369,3 +370,100 @@ class PlotOptionsDialog(QDialog):
             x_range=rng(self.x_auto, self.x_lo, self.x_hi),
             y_range=rng(self.y_auto, self.y_lo, self.y_hi),
         )
+
+
+class SeriesDialog(QDialog):
+    """Composition of every loaded file against the sample order: a table, a plot
+    (atomic percent per element with error bars) and CSV / Origin export."""
+
+    def __init__(
+        self,
+        frame: pd.DataFrame,
+        export: Any = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        import pyqtgraph as pg
+
+        from ..automation.series import series_elements
+        from ..export.plots import SERIES
+
+        super().__init__(parent)
+        self.setWindowTitle("Composition series")
+        self.resize(1000, 640)
+        self.frame = frame
+        self.table = QTableWidget(len(frame.index), len(frame.columns))
+        self.table.setHorizontalHeaderLabels([str(c) for c in frame.columns])
+        self.table.verticalHeader().setVisible(False)
+        for r, (_idx, row) in enumerate(frame.iterrows()):
+            for c, value in enumerate(row):
+                text = (
+                    ""
+                    if pd.isna(value)
+                    else (f"{value:.2f}" if isinstance(value, float) else str(value))
+                )
+                self.table.setItem(r, c, QTableWidgetItem(text))
+        self.table.resizeColumnsToContents()
+        self.plot = pg.PlotWidget(background="#ffffff")
+        item = self.plot.getPlotItem()
+        for name in ("left", "bottom", "top", "right"):
+            item.showAxis(name)
+            ax = item.getAxis(name)
+            ax.setPen(pg.mkPen("#000000"))
+            ax.setTextPen(pg.mkPen("#000000"))
+            ax.setStyle(tickLength=-6)
+        item.getAxis("top").setStyle(showValues=False)
+        item.getAxis("right").setStyle(showValues=False)
+        item.setLabel("left", "Atomic concentration (%)", color="#000000")
+        item.setLabel("bottom", "Sample", color="#000000")
+        item.addLegend(offset=(-10, 10), labelTextColor="#000000")
+        x = frame["index"].to_numpy(dtype=float)
+        item.getAxis("bottom").setTicks([[(float(i), str(s)) for i, s in zip(x, frame["sample"])]])
+        self.curves = []
+        for k, el in enumerate(series_elements(frame)):
+            color = SERIES[k % len(SERIES)]
+            y = frame[f"{el} at%"].to_numpy(dtype=float)
+            ok = np.isfinite(y)
+            curve = item.plot(
+                x[ok],
+                y[ok],
+                pen=pg.mkPen(color, width=1.5),
+                symbol="o",
+                symbolSize=7,
+                symbolPen=pg.mkPen(color, width=1.2),
+                symbolBrush=pg.mkBrush("#ffffff"),
+                name=el,
+            )
+            self.curves.append(curve)
+            if f"{el} err" in frame.columns:
+                err = frame[f"{el} err"].to_numpy(dtype=float)
+                good = ok & np.isfinite(err)
+                if good.any():
+                    item.addItem(
+                        pg.ErrorBarItem(
+                            x=x[good],
+                            y=y[good],
+                            height=2 * err[good],
+                            beam=0.15,
+                            pen=pg.mkPen(color, width=1),
+                        )
+                    )
+        # half a step of room on both sides so the first and last sample names show,
+        # and atomic percent from zero
+        if x.size:
+            item.setXRange(float(x.min()) - 0.5, float(x.max()) + 0.5, padding=0.0)
+            shares = [frame[c].to_numpy(dtype=float) for c in frame.columns if c.endswith(" at%")]
+            top = max((float(np.nanmax(v)) for v in shares if np.isfinite(v).any()), default=100.0)
+            item.setYRange(0.0, min(100.0, top * 1.12 + 1.0), padding=0.0)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.plot, 3)
+        lay.addWidget(self.table, 2)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        if export is not None:
+            to_csv = QPushButton("Export CSV…")
+            to_csv.clicked.connect(lambda: export(False))
+            to_origin = QPushButton("Export for Origin…")
+            to_origin.clicked.connect(lambda: export(True))
+            buttons.addButton(to_csv, QDialogButtonBox.ButtonRole.ActionRole)
+            buttons.addButton(to_origin, QDialogButtonBox.ButtonRole.ActionRole)
+        lay.addWidget(buttons)

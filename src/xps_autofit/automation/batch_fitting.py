@@ -27,12 +27,14 @@ from ..core.region import RegionSpec
 from ..core.spectrum import AL_KALPHA_EV, Spectrum
 from ..core.uncertainty import bootstrap
 from ..database.binding_energies import suggest_assignments
-from ..export.plots import plot_candidates, plot_fit
+from ..export.origin import write_origin_csv
+from ..export.plots import plot_candidates, plot_fit, plot_series
 from ..export.project import project_dict, save_project
 from ..export.tables import candidates_table, components_table, fit_table, write_xlsx
 from ..readers import read_spectra
 from ..recipes import Recipe
 from .model_selection import SelectionResult, select_model
+from .series import composition_series, series_origin_columns
 
 
 @dataclass
@@ -467,6 +469,19 @@ def write_summary(batch: BatchReport, options: RunOptions) -> dict[str, str]:
     }
     paths: dict[str, str] = {}
     fmts = set(options.formats)
+    # Composition series (depth profile / sample series) when several files have one
+    series_items = [(Path(f.path).stem, f.quantification) for f in batch.files]
+    if sum(1 for _s, q in series_items if q is not None and q.status == "OK") >= 2:
+        series = composition_series(series_items)
+        tables["summary_series"] = series
+        if "origin" in fmts:
+            p = write_origin_csv(out / "summary_series_origin.csv", series_origin_columns(series))
+            paths["summary_series_origin"] = str(p)
+        for fmt in ("png", "svg", "pdf"):
+            if fmt in fmts:
+                p = out / f"composition_series.{fmt}"
+                plot_series(series, p, dpi=options.plot_dpi, style=options.figure_style)
+                paths[f"composition_series_{fmt}"] = str(p)
     if "csv" in fmts or not fmts & {"xlsx"}:
         for name, df in tables.items():
             p = out / f"{name}.csv"

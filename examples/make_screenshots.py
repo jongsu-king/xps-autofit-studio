@@ -23,7 +23,13 @@ from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 from xps_autofit.gui.main_window import MainWindow  # noqa: E402
 from xps_autofit.gui.panels import DiagnosticsPanel, ModelTable  # noqa: E402
 from xps_autofit.gui.theme import apply_theme  # noqa: E402
-from xps_autofit.synthetic import example_dataset  # noqa: E402
+from xps_autofit.readers.vamas_reader import write_vamas  # noqa: E402
+from xps_autofit.synthetic import (  # noqa: E402
+    example_dataset,
+    p3ht_c1s,
+    p3ht_s2p,
+    synthesize,
+)
 
 
 def _grab_standalone(widget: QWidget, width: int, height: int, path: Path) -> None:
@@ -149,6 +155,34 @@ def main(out_dir: str | Path) -> list[Path]:
         p = out / "gui_compare.png"
         win.grab().save(str(p))
         written.append(p)
+
+        # 7. Composition series: four "ageing" files whose oxidised sulfur grows
+        series_dir = data / "series"
+        series_dir.mkdir()
+        for i, scale in enumerate((1.0, 1.2, 1.45, 1.7), start=1):
+            s2p, _ = synthesize(p3ht_s2p(i > 1), seed=10 + i, name="S 2p")
+            s2p.intensity = s2p.intensity * scale
+            c1s, _ = synthesize(p3ht_c1s(), seed=20 + i, name="C 1s")
+            blocks = []
+            for spec, species, transition in ((s2p, "S", "2p"), (c1s, "C", "1s")):
+                b = spec.copy()
+                b.metadata.update({"species": species, "transition": transition})
+                blocks.append(b)
+            write_vamas(series_dir / f"p3ht_day{7 * i}.vms", blocks, axis="kinetic")
+        keys = win.load_files([str(q) for q in sorted(series_dir.glob("*.vms"))])
+        win.use_recipe("p3ht")
+        win.select_key(keys[0])
+        win.fit_all(keys)
+        app.processEvents()
+        # only the series files: drop the earlier ones from the session view
+        for k in [k for k in win.session.order if k not in keys]:
+            win.session.remove(k)
+        dialog = win.composition_series_dialog()
+        if dialog is not None:
+            p = out / "gui_series.png"
+            _grab_standalone(dialog, 1000, 640, p)
+            written.append(p)
+            dialog.close()
         win.close()
         app.processEvents()
     return written

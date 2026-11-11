@@ -187,6 +187,21 @@ def build_parser() -> argparse.ArgumentParser:
     pid.add_argument("--photon-energy", type=float, default=None)
     pid.add_argument("--elements", default=None, help="comma list restricting the search")
     pid.add_argument("--json", action="store_true", help="print the full result as JSON")
+    pid.add_argument(
+        "--quantify",
+        action="store_true",
+        help="also estimate the composition from the survey (one line per element, "
+        "Shirley-subtracted area / relative intensity)",
+    )
+    pid.add_argument(
+        "--imfp-exponent", type=float, default=0.0, help="--quantify: escape-depth exponent a"
+    )
+    pid.add_argument(
+        "--transmission-exponent",
+        type=float,
+        default=0.0,
+        help="--quantify: analyser transmission exponent b (areas divided by KE^(a+b))",
+    )
 
     ps = sub.add_parser(
         "suggest", help="propose a recipe (regions, doublets, RSFs) from a survey spectrum"
@@ -492,8 +507,21 @@ def cmd_identify(args: argparse.Namespace) -> int:
                 photon_energy=args.photon_energy,
                 elements=elements,
             )
+            quant = None
+            if args.quantify:
+                from .automation.survey_quant import quantify_survey
+                from .core.quantification import QuantCorrection
+
+                quant = quantify_survey(
+                    s,
+                    ident,
+                    correction=QuantCorrection(args.imfp_exponent, args.transmission_exponent),
+                )
             if args.json:
-                print(json.dumps(ident.to_dict(), indent=1))
+                data = ident.to_dict()
+                if quant is not None:
+                    data["quantification"] = quant.to_dict()
+                print(json.dumps(data, indent=1))
                 continue
             print(
                 f"{f} {s.name!r}: {len(ident.peaks)} peaks above {5:g} sigma "
@@ -527,6 +555,22 @@ def cmd_identify(args: argparse.Namespace) -> int:
                     print(f"    {p.energy:7.1f} eV  height {p.height:9.0f}  nearest: {hints}")
             for n in ident.notes:
                 print(f"  note: {n}")
+            if quant is not None:
+                print(f"  survey composition ({quant.status}):")
+                for q in quant.lines:
+                    err = (
+                        f" +/- {q.atomic_percent_err:4.1f}"
+                        if q.atomic_percent_err is not None
+                        else ""
+                    )
+                    extra = f"  ({q.note})" if q.note else ""
+                    print(
+                        f"    {q.element:<3} {q.atomic_percent:5.1f} %{err}  from {q.line:<6} "
+                        f"{q.window[0]:6.1f}-{q.window[1]:6.1f} eV{extra}"
+                    )
+                for el, why in quant.skipped.items():
+                    print(f"    {el:<3} not quantified: {why}")
+                print(f"  note: {quant.note}")
     return rc
 
 

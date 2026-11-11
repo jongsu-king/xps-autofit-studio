@@ -78,7 +78,10 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
 8. **IDENTIFY** (F8) runs the survey element identification on the selected
    spectrum: the elements whose lines explain the peaks are listed with their
    confidence, matched and missing lines and ambiguities, and the matched lines are
-   marked on the spectrum (see `algorithm.md`, section 11). **Analysis > Suggest
+   marked on the spectrum (see `algorithm.md`, section 11). The survey's rough
+   composition (one line per element, Shirley-subtracted area over its relative
+   intensity) goes to the log and, while the file has no fitted region, to the
+   Composition tab. **Analysis > Suggest
    recipe from survey…** then writes a recipe YAML with one region per identified
    element (range around the measured line, database doublet for an unresolved
    p/d/f level, Scofield RSF, C 1s as charge reference) and selects it in the
@@ -116,7 +119,20 @@ for the escape-depth / transmission correction (`algorithm.md`, section 12). The
 kinetic energy of each line, the atomic percentages and, when every region has a
 bootstrap, their standard deviations and 95 % intervals are listed; a missing
 factor makes the sample `NOT_CALCULABLE` and the row red rather than guessed.
-*Copy table* puts it on the clipboard.
+*Copy table* puts it on the clipboard. A survey that has been through IDENTIFY and
+has no fitted region shows its survey estimate here instead, marked as such.
+
+## Composition series
+
+**Analysis > Composition series…** (Ctrl+Shift+T) collects the composition of every
+loaded file - its fitted regions as in the Composition tab, or the survey estimate
+of an identified survey - into one table in natural name order (`cycle2` before
+`cycle10`) and plots the atomic percent of each element against the sample, with
+error bars when bootstraps exist: a depth profile or an ageing series at a glance.
+*Export CSV…* writes the table, *Export for Origin…* the same with Origin's label
+rows (opened in Origin when it is installed).
+
+![Composition series of four ageing samples](images/gui_series.png)
 
 ## Comparison view
 

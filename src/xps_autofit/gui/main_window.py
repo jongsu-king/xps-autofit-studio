@@ -35,7 +35,9 @@ from ..automation.batch_fitting import RunOptions, run_batch, write_region_outpu
 from ..automation.identify import Identification, identify_elements
 from ..automation.model_selection import select_model
 from ..automation.peak_detection import residual_peak
+from ..automation.series import composition_series, series_origin_columns
 from ..automation.suggest import suggest_recipe
+from ..automation.survey_quant import SurveyQuant, quantify_survey
 from ..core.constraints import check_physical
 from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_result
 from ..core.preprocessing import C1S_REFERENCE_WARNING
@@ -62,7 +64,7 @@ from ..update_check import (
     disabled_by_environment,
 )
 from .compat import pyside_refcount_warning
-from .dialogs import BatchDialog, ExportDialog, PlotOptionsDialog, TableDialog
+from .dialogs import BatchDialog, ExportDialog, PlotOptionsDialog, SeriesDialog, TableDialog
 from .panels import (
     ComponentsTable,
     CompositionPanel,
@@ -144,6 +146,8 @@ class MainWindow(QMainWindow):
         self._update_thread: UpdateCheckThread | None = None
         self.last_update_info: UpdateInfo | None = None
         self.last_identification: Identification | None = None
+        self.survey_quant: dict[str, SurveyQuant] = {}
+        """Survey composition estimates by spectrum key (filled by IDENTIFY)."""
 
         # ---- theme and plot style (persisted) and the central plot
         self._theme = str(self.settings_store.value("ui/theme", DEFAULT_THEME))
@@ -356,6 +360,13 @@ class MainWindow(QMainWindow):
             "Survey: list the elements whose lines explain the peaks and mark them"
         )
         self.act_identify.triggered.connect(lambda: self.identify_current())
+        self.act_series = QAction("Composition series…", self)
+        self.act_series.setShortcut("Ctrl+Shift+T")
+        self.act_series.setToolTip(
+            "Atomic percent of every loaded file against the sample order (depth profile, "
+            "ageing series): table, plot, CSV and Origin export"
+        )
+        self.act_series.triggered.connect(self.composition_series_dialog)
         self.act_suggest = QAction("Suggest recipe from survey…", self)
         self.act_suggest.setToolTip(
             "After IDENTIFY: write a recipe with one region per element (range, doublet, RSF)"
@@ -432,6 +443,7 @@ class MainWindow(QMainWindow):
             self.act_uncertainty,
             self.act_identify,
             self.act_suggest,
+            self.act_series,
             self.act_align,
             self.act_batch,
         ):
@@ -1102,6 +1114,7 @@ class MainWindow(QMainWindow):
             return
         key, item = cur
         self.session.remove(key)
+        self.survey_quant.pop(key, None)
         self._current_key = None
         self.plot.show_spectrum(item.spectrum, "")
         self.components.show_result(None)
@@ -1695,11 +1708,16 @@ class MainWindow(QMainWindow):
                 "surveys but runs anyway"
             )
 
-        def job() -> Identification:
-            return identify_elements(spectrum, tolerance=tolerance, min_confidence=min_confidence)
+        def job() -> tuple[Identification, SurveyQuant]:
+            ident = identify_elements(spectrum, tolerance=tolerance, min_confidence=min_confidence)
+            recipe = self.session.recipe
+            corr = recipe.quantification if recipe is not None else None
+            return ident, quantify_survey(spectrum, ident, correction=corr)
 
-        def done(ident: Identification) -> None:
+        def done(found_and_quant: tuple[Identification, SurveyQuant]) -> None:
+            ident, quant = found_and_quant
             self.last_identification = ident
+            self.survey_quant[key] = quant
             found = ", ".join(f"{c.element} ({c.confidence:.2f})" for c in ident.candidates)
             self.log(
                 f"{item.display_name}: {len(ident.peaks)} peaks; elements: "
@@ -1715,6 +1733,13 @@ class MainWindow(QMainWindow):
             if key == self._current_key:
                 self.plot.show_spectrum(spectrum, f"{item.display_name} - identified elements")
                 self.plot.mark_lines(marks[:24])
+            if quant.lines:
+                self.log(
+                    "  survey composition (rough): "
+                    + ", ".join(f"{q.element} {q.atomic_percent:.1f} %" for q in quant.lines)
+                )
+            if key == self._current_key:
+                self._refresh_composition()
             self.lamp.set_state("ok", "IDENTIFIED")
             if not self.runner.synchronous:
                 TableDialog(
@@ -1808,9 +1833,16 @@ class MainWindow(QMainWindow):
             self.composition.show_result(None, "")
             return
         key, item = cur
+        quant = self.session.composition(key)
+        survey = self.survey_quant.get(key)
+        if quant is None and survey is not None:
+            # a survey without fitted regions: show the survey estimate instead
+            self.composition.show_result(
+                survey.to_quant_result(), f"{item.display_name} (survey estimate)"
+            )
+            return
         self.composition.show_result(
-            self.session.composition(key),
-            f"{item.path.name}: {len(self.session.siblings(key))} spectrum/spectra",
+            quant, f"{item.path.name}: {len(self.session.siblings(key))} spectrum/spectra"
         )
 
     def _display_state(self, key: str, state: RegionState) -> None:
@@ -1874,6 +1906,76 @@ class MainWindow(QMainWindow):
             self.lamp.set_state(state.status if state else "ok")
 
         return self.runner.start(job, done, self._error, label="export")
+
+    # -------------------------------------------------------- composition series
+    def composition_series_frame(self, order: str = "natural") -> pd.DataFrame:
+        """One row per loaded file: the composition of its fitted regions (as in the
+        Composition tab), or the survey estimate of a survey that was identified."""
+        items: list[tuple[str, Any]] = []
+        seen: set[Path] = set()
+        for key in self.session.order:
+            item = self.session.items[key]
+            if item.path in seen:
+                continue
+            seen.add(item.path)
+            quant = self.session.composition(key)
+            if quant is None:
+                survey = next(
+                    (
+                        self.survey_quant[k]
+                        for k in self.session.siblings(key)
+                        if k in self.survey_quant
+                    ),
+                    None,
+                )
+                quant = survey.to_quant_result() if survey is not None else None
+            items.append((item.path.stem, quant))
+        return composition_series(items, order=order)
+
+    def composition_series_dialog(self) -> SeriesDialog | None:
+        frame = self.composition_series_frame()
+        n_ok = int((frame["status"] == "OK").sum()) if len(frame.index) else 0
+        if n_ok < 1:
+            self.log(
+                "no file has a composition yet: fit the regions (FIT ALL) or IDENTIFY a survey"
+            )
+            return None
+        self.log(f"composition series: {len(frame.index)} file(s), {n_ok} with a composition")
+        dlg = SeriesDialog(
+            frame, export=lambda origin: self.export_series_dialog(origin), parent=self
+        )
+        if not self.runner.synchronous:
+            dlg.exec()
+        return dlg
+
+    def export_series_dialog(self, origin: bool) -> None:
+        default = Path(str(self.settings_store.value("export_dir", str(Path.home()))))
+        name = "composition_series_origin.csv" if origin else "composition_series.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export composition series", str(default / name), "CSV (*.csv)"
+        )
+        if path:
+            self.export_series(path, origin=origin, open_after=origin)
+
+    def export_series(
+        self,
+        path: str | Path,
+        origin: bool = False,
+        open_after: bool = False,
+        opener: Callable[[Path], str] | None = None,
+    ) -> Path:
+        """Write the composition series as plain CSV or as CSV for Origin."""
+        frame = self.composition_series_frame()
+        p = Path(path)
+        if origin:
+            write_origin_csv(p, series_origin_columns(frame))
+        else:
+            frame.to_csv(p, index=False)
+        self.settings_store.setValue("export_dir", str(p.parent))
+        self.log(f"composition series: {p}")
+        if open_after:
+            (opener or open_in_origin)(p)
+        return p
 
     # ------------------------------------------------------------------ Origin
     def export_origin_dialog(self) -> None:

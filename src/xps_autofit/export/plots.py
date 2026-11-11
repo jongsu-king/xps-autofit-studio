@@ -22,6 +22,7 @@ matplotlib.use("Agg")
 import matplotlib.font_manager as fm  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
+from matplotlib.ticker import AutoMinorLocator  # noqa: E402
 
 from ..core.fitting import FitResult  # noqa: E402
 
@@ -316,6 +317,73 @@ def plot_candidates(
         ax.set_xticks(ns)
         if style == "origin":
             ax.minorticks_off()
+        if path is not None:
+            fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=look.surface)
+            plt.close(fig)
+        return fig
+
+
+def plot_series(
+    frame: Any,
+    path: str | Path | None = None,
+    title: str = "",
+    dpi: int = 200,
+    style: str = DEFAULT_FIGURE_STYLE,
+) -> Figure:
+    """Atomic percent of every element against the sample order (a depth profile or a
+    series), from :func:`xps_autofit.automation.series.composition_series`."""
+    from ..automation.series import series_elements
+
+    _check_style(style)
+    look = _ORIGIN if style == "origin" else _CLASSIC
+    family = origin_font_family() if style == "origin" else None
+    font: dict[str, Any] = {"fontfamily": family} if family else {}
+    with plt.rc_context(_rc(style)):
+        n = len(frame.index)
+        fig, ax = plt.subplots(figsize=(max(4.8, 0.55 * n + 2.5), 3.8))
+        fig.patch.set_facecolor(look.surface)
+        _style_axes(ax, style, look.surface)
+        if family:
+            ax.tick_params(labelfontfamily=family)
+        x = frame["index"].to_numpy(dtype=float)
+        for k, el in enumerate(series_elements(frame)):
+            y = frame[f"{el} at%"].to_numpy(dtype=float)
+            err = frame[f"{el} err"].to_numpy(dtype=float) if f"{el} err" in frame else None
+            color = SERIES[k % len(SERIES)]
+            ax.errorbar(
+                x,
+                y,
+                yerr=err,
+                color=color,
+                marker="o",
+                ms=5,
+                mfc="white" if style == "origin" else color,
+                lw=1.2,
+                capsize=2.5,
+                label=el,
+            )
+        ax.set_xticks(x)
+        labels = [str(s) for s in frame["sample"]]
+        rotate = max((len(s) for s in labels), default=0) * n > 60
+        ax.set_xticklabels(labels, rotation=45 if rotate else 0, ha="right" if rotate else "center")
+        ax.set_xlabel("Sample", fontsize=9, color=look.text, **font)
+        ax.set_ylabel("Atomic concentration (%)", fontsize=9, color=look.text, **font)
+        ax.set_ylim(bottom=0)
+        if style == "origin":
+            ax.minorticks_off()
+            ax.tick_params(axis="y", which="minor", left=True, right=True)
+            ax.yaxis.set_minor_locator(AutoMinorLocator())
+        legend_kwargs: dict[str, Any] = {"loc": "best"}
+        if style == "origin":
+            legend_kwargs.update(
+                frameon=True, edgecolor="black", fancybox=False, prop={"family": family, "size": 8}
+            )
+        else:
+            legend_kwargs.update(frameon=False, fontsize=8)
+        ax.legend(**legend_kwargs)
+        if title:
+            ax.set_title(title, fontsize=10, color=look.text, loc="left", **font)
+        fig.tight_layout()
         if path is not None:
             fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=look.surface)
             plt.close(fig)

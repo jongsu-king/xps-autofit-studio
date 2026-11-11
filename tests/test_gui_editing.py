@@ -266,3 +266,48 @@ def test_export_for_origin_from_the_app(window, app, data_dir, tmp_path):
     pairs = window.export_for_origin(tmp_path / "compare_origin.csv")
     first = pairs[0].read_text(encoding="utf-8").splitlines()[0].split(",")
     assert first[0] == "Binding Energy" and first[2] == "Binding Energy" and len(first) == 4
+
+
+def test_survey_composition_and_series_in_the_app(window, app, data_dir, tmp_path):
+    import pandas as pd
+
+    # IDENTIFY on a survey fills the Composition tab with the survey estimate
+    keys = window.load_files([str(data_dir / "cu2o_survey.csv")])
+    survey_key = keys[0]
+    window.select_key(survey_key)
+    assert window.identify_current()
+    app.processEvents()
+    quant = window.survey_quant[survey_key]
+    assert quant.status == "OK" and {"Cu", "O", "C"} <= set(quant.composition())
+    shown = window.composition.result
+    assert shown is not None and all(e.label.endswith("(survey)") for e in shown.entries)
+    assert "survey estimate" in window.composition.status.text()
+    assert "survey composition (rough)" in window.log_panel.toPlainText()
+    # two fitted multi-region files plus the survey make a series of three
+    multi = window.load_files(
+        [str(data_dir / "p3ht_aged_multi.vms"), str(data_dir / "p3ht_aged_multi.xlsx")]
+    )
+    window.use_recipe("p3ht")
+    window.select_key(multi[0])
+    window.fit_all(multi)
+    app.processEvents()
+    frame = window.composition_series_frame()
+    assert list(frame["sample"]) == ["cu2o_survey", "p3ht_aged_multi", "p3ht_aged_multi"]
+    assert list(frame["status"]) == ["OK", "OK", "OK"]
+    assert frame.loc[1, "S at%"] == pytest.approx(frame.loc[2, "S at%"], abs=0.5)
+    dlg = window.composition_series_dialog()
+    assert dlg is not None and dlg.table.rowCount() == 3
+    assert len(dlg.curves) == len([c for c in frame.columns if c.endswith(" at%")])
+    dlg.close()
+    dlg.deleteLater()
+    plain = window.export_series(tmp_path / "series.csv")
+    assert pd.read_csv(plain)["sample"].tolist() == frame["sample"].tolist()
+    opened: list[Path] = []
+    origin = window.export_series(
+        tmp_path / "series_origin.csv",
+        origin=True,
+        open_after=True,
+        opener=lambda p: (opened.append(p), "default")[1],
+    )
+    assert opened == [origin]
+    assert origin.read_text(encoding="utf-8").splitlines()[0].startswith("Sample index,")
