@@ -144,7 +144,9 @@ VBM; the log gives the VBM with its standard error, how far it moves with the ed
 window, the energy ranges used and the first band maximum. Load the valence-band
 region with some baseline below the edge (to about -2 eV); a range that starts on
 the edge is refused with a message. `xps-autofit vbm` does the same from the
-command line, with explicit windows and an Origin-style figure.
+command line, with explicit windows and an Origin-style figure. When the recipe in
+use has a `report: vbm` region covering the spectrum, its range and edge window
+are used (the log says so), as in a batch run.
 
 ![Valence-band maximum of a synthetic oxide valence band](images/gui_vbm.png)
 

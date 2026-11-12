@@ -74,7 +74,7 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Uncertainties** | Covariance errors; Poisson or residual bootstrap of areas, centres, widths, fractions, propagated to atomic percentages |
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction; a rough composition from the survey itself (`identify --quantify`); `suggest` turns the result into a recipe (regions around the measured lines, database doublets, Scofield RSFs, C 1s charge reference) |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu; composition series over many samples (depth profiles, ageing series) as a table, a figure and an Origin file; instrument RSF libraries (CSV / YAML, `--rsf-library`) with the source of every factor recorded |
-| **Valence band** | Valence-band maximum by linear extrapolation of the leading edge onto the baseline, automatic or explicit windows, standard error and window sensitivity, Origin-style figure (`xps-autofit vbm`, *Analysis > Valence-band edge* in the app) |
+| **Valence band** | Valence-band maximum by linear extrapolation of the leading edge onto the baseline, automatic or explicit windows, standard error and window sensitivity, Origin-style figure (`xps-autofit vbm`, *Analysis > Valence-band edge* in the app, `report: vbm` regions in recipes and batch runs) |
 | **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), CSV that OriginLab Origin opens as a labelled workbook (`--formats origin`, *Export for Origin* in the app, opened in Origin when it is installed), a PDF report per file (summary, composition, one page per region; `--formats report`), per-run summaries; `verify` reproduces a project |
 | **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), fixable centres and widths per component, links between components (right-click), chemical-state suggestions per component, plot options (title, labels, fonts, ranges), "save settings as recipe", bootstrap, batch, export, PDF report, element identification with recipe suggestion, session files, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
@@ -297,7 +297,8 @@ page per fitted region (figure, component table with suggested chemical states,
 selection notes).
 
 Per run: `summary_regions.csv` (with `grade`, `quality_score`, `durbin_watson`,
-`max_correlation`), `summary_components.csv`, `summary_quantification.csv` (and
+`max_correlation`; `vbm_eV` and its error for `report: vbm` regions),
+`summary_components.csv`, `summary_quantification.csv` (and
 `summary.xlsx`). When two or more files have a composition: `summary_series.csv`
 (one row per file in natural name order, one atomic-percent column per element)
 and `composition_series.png` - a depth profile or sample series at a glance - plus
@@ -377,7 +378,8 @@ software. Readers for additional formats can be registered with
   redraws that release their plot items
 - the valence-band maximum on synthetic valence bands (within 0.04 eV at 0.5 eV
   resolution, the low reading at 0.9 eV resolution, explicit windows, refused
-  ranges, the flat-baseline fallback, command line, figures, the app)
+  ranges, the flat-baseline fallback, command line, figures, the app, a batch of
+  three films with a `report: vbm` recipe region)
 - links between components (offset, ratio and widths followed exactly or within a
   tolerance, error propagation, cycles and unknown targets refused, recipe and
   project round trips, renames, the component table, the app's context menu) and a
@@ -390,7 +392,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (278 tests, about eight minutes). Comparisons with real instrument
+Run `pytest` to execute them (279 tests, about eight minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 

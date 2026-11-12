@@ -189,7 +189,33 @@ def test_valence_band_edge_in_the_app(window, app, tmp_path):
     window.select_key(k2[0])
     assert window.valence_band_edge() is None
     assert "no valence-band edge" in window.log_panel.toPlainText()
-    # removing the spectrum forgets its edge
+    # a recipe's report: vbm region gives the range and the edge window
+    import yaml
+
+    recipe_path = tmp_path / "oxide_vb.yaml"
+    recipe_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "oxide_vb",
+                "regions": [
+                    {
+                        "name": "VB",
+                        "range": [-2.0, 10.0],
+                        "fit": False,
+                        "report": "vbm",
+                        "vbm_edge_window": [0.3, 0.7],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    window.use_recipe_file(recipe_path)
     window.select_key(keys[0])
+    edge = window.valence_band_edge()
+    assert edge is not None and edge.edge_window == (0.3, 0.7)
+    assert edge.baseline.lo >= -2.0 and abs(edge.vbm - truth["vbm"]) < 0.05
+    assert "recipe region 'VB'" in window.log_panel.toPlainText()
+    # removing the spectrum forgets its edge
     window.remove_current_spectrum()
     assert keys[0] not in window.vb_edges

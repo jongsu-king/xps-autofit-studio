@@ -77,6 +77,11 @@ All notable changes to this project are documented here. The format follows
   `synthesize_valence_band` for tests. On synthetic valence bands at 0.3-0.5 eV
   resolution the VBM comes back within 0.03 eV; at 0.9 eV it reads 0.03-0.08 eV low
   (`algorithm.md`, section 13).
+- `report: vbm` recipe regions (`fit: false`, optional `vbm_edge_window`): `fit` and
+  `batch` write the VBM of every matching spectrum into `summary_regions.csv`
+  (`vbm_eV`, `vbm_err`, `vbm_window_spread_eV`, `vbm_band_maximum_eV`,
+  `vbm_edge_eV`) with a figure per file; the app's VBM action uses such a region of
+  the recipe in use. `report` is now checked (`auger_max` or `vbm`).
 
 - *Edit link values…* in the Components table's context menu: type a centre offset
   or area ratio and the tolerance within which the fit may choose it.

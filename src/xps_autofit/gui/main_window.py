@@ -1862,20 +1862,35 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- identification
     def valence_band_edge(
         self,
-        edge_window: tuple[float, float] = (0.2, 0.6),
+        edge_window: tuple[float, float] | None = None,
         figure: str | Path | None = None,
     ) -> VBEdge | None:
         """Valence-band maximum of the selected spectrum by linear extrapolation of the
         leading edge (:func:`~xps_autofit.automation.valence_band.find_vb_edge`); the
-        plot shows both lines and the VBM, ``figure`` also writes the export figure."""
+        plot shows both lines and the VBM, ``figure`` also writes the export figure.
+
+        A ``report: vbm`` region of the recipe in use that covers the spectrum gives
+        the energy range and the edge window (an explicit ``edge_window`` wins)."""
         cur = self.current()
         if cur is None:
             self.log("select a valence-band spectrum first")
             return None
         key, item = cur
         spectrum = item.spectrum
+        energy_range = None
+        recipe = self.session.recipe
+        if recipe is not None:
+            from ..automation.batch_fitting import match_regions
+
+            vb = next((r for _s, r in match_regions([spectrum], recipe) if r.report == "vbm"), None)
+            if vb is not None:
+                energy_range = vb.range
+                edge_window = edge_window or vb.vbm_edge_window
+                self.log(f"valence-band edge with the recipe region {vb.name!r}")
         try:
-            edge = find_vb_edge(spectrum, edge_window=edge_window)
+            edge = find_vb_edge(
+                spectrum, energy_range=energy_range, edge_window=edge_window or (0.2, 0.6)
+            )
         except (VBEdgeError, ValueError) as exc:
             self.log(f"{item.display_name}: no valence-band edge ({exc})")
             return None

@@ -457,3 +457,13 @@ into the default window and the extrapolation lands 0.03-0.08 eV low; raise the
 lower fraction (`--edge-window 0.3 0.7`) or give the edge explicitly for such data.
 Linear extrapolation itself is a convention: it ignores the tail of states above
 the edge and the instrument broadening, so compare VBMs read the same way.
+
+In a recipe, a report-only region (`fit: false`) with `report: vbm` gives the
+energy range and `vbm_edge_window`; `fit` / `batch` then write the VBM of every
+matching spectrum into `summary_regions.csv` (`vbm_eV`, `vbm_err`,
+`vbm_window_spread_eV`, `vbm_band_maximum_eV`, `vbm_edge_eV`), a figure
+`<file>__<region>_vbm.png` (svg / pdf as requested), and a failed region with the
+reason when there is no edge. When the recipe has a charge reference (applied
+unless `--no-charge-correction`), the valence band is shifted like every other
+region of the file before the edge is read. The app's VBM action
+uses such a region of the recipe in use when one covers the spectrum.

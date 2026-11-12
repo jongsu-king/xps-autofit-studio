@@ -111,3 +111,58 @@ def test_vbm_figure_styles(tmp_path):
     path = tmp_path / "vb.svg"
     plot_vb_edge(spec, edge, path)
     assert path.read_text().startswith("<?xml")
+
+
+def test_vbm_region_in_a_batch(tmp_path):
+    import pandas as pd
+
+    from xps_autofit.automation.batch_fitting import RunOptions, run_batch
+    from xps_autofit.core.region import RegionSpec
+    from xps_autofit.recipes import recipe_from_dict
+
+    data = tmp_path / "vb"
+    data.mkdir()
+    truths = {}
+    for i, vbm in enumerate((1.1, 1.6, 2.2), start=1):
+        spec, truth = synthesize_valence_band(vbm=vbm, seed=i)
+        _csv(data / f"film_{i}.csv", spec)
+        truths[f"film_{i}"] = truth["vbm"]
+    _csv(data / "film_flat.csv", Spectrum(spec.energy, np.full_like(spec.energy, 40.0)))
+    recipe = recipe_from_dict(
+        {
+            "name": "oxide_vb",
+            "regions": [
+                {
+                    "name": "VB",
+                    "range": [-3.0, 12.0],
+                    "fit": False,
+                    "report": "vbm",
+                    "vbm_edge_window": [0.2, 0.6],
+                    "notes": "VBM by linear extrapolation",
+                }
+            ],
+        }
+    )
+    region = recipe.region("VB")
+    assert region.to_dict()["vbm_edge_window"] == [0.2, 0.6]
+    assert RegionSpec.from_dict(region.to_dict()) == region
+    out = tmp_path / "out"
+    batch = run_batch([data], recipe, RunOptions(out, formats=("csv", "png")))
+    rows = pd.read_csv(out / "summary_regions.csv").set_index("sample")
+    for stem, vbm in truths.items():
+        assert rows.loc[stem, "status"] == "reported"
+        assert abs(rows.loc[stem, "vbm_eV"] - vbm) < 0.05
+        assert 0 < rows.loc[stem, "vbm_err"] < 0.05
+        assert (out / f"{stem}__VB_vbm.png").exists()
+    assert rows.loc["film_flat", "status"] == "failed"
+    assert "no valence-band edge" in rows.loc["film_flat", "messages"]
+    reports = {f.sample: f for f in batch.files}
+    assert reports["film_1"].regions[0].vbm["edge_window"] == [0.2, 0.6]
+    # recipe errors
+    for bad in ({"report": "vbm"}, {"report": "vbm_max", "fit": False}):
+        with pytest.raises(ValueError):
+            RegionSpec.from_dict({"name": "VB", "range": [-3, 12], **bad})
+    with pytest.raises(ValueError, match="vbm_edge_window"):
+        RegionSpec.from_dict(
+            {"name": "VB", "fit": False, "report": "vbm", "vbm_edge_window": [0.7, 0.3]}
+        )

@@ -69,6 +69,8 @@ class RegionReport:
     selection: SelectionResult | None = None
     outputs: dict[str, str] = field(default_factory=dict)
     auger: dict[str, Any] | None = None
+    vbm: dict[str, Any] | None = None
+    """``report: vbm`` regions: :meth:`VBEdge.to_dict` of the valence-band edge."""
     assignments: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     messages: list[str] = field(default_factory=list)
 
@@ -185,6 +187,42 @@ def _auger_report(spectrum: Spectrum, region: RegionSpec, hv: float) -> dict[str
         "photon_energy_eV": hv,
         "method": "smoothed maximum (Savitzky-Golay, ~0.9 eV window)",
     }
+
+
+def _vbm_report(
+    path: Path, sample: str, spectrum: Spectrum, region: RegionSpec, options: RunOptions
+) -> RegionReport:
+    """The valence-band maximum of a ``report: vbm`` region, with a figure in the
+    requested image formats (``<file>__<region>_vbm.png``)."""
+    from .valence_band import VBEdgeError, find_vb_edge
+
+    rr = RegionReport(str(path), sample, region.name, "reported")
+    try:
+        edge = find_vb_edge(spectrum, energy_range=region.range, edge_window=region.vbm_edge_window)
+    except (VBEdgeError, ValueError) as exc:
+        rr.status = "failed"
+        rr.messages.append(f"no valence-band edge: {exc}")
+        return rr
+    rr.vbm = edge.to_dict()
+    rr.messages.extend(edge.notes)
+    if region.notes.strip():
+        rr.messages.append(region.notes.strip())
+    out = Path(options.output_dir)
+    for fmt in ("png", "svg", "pdf"):
+        if fmt in options.formats:
+            from ..export.plots import plot_vb_edge
+
+            out.mkdir(parents=True, exist_ok=True)
+            target = out / f"{path.stem}__{slug(region.name)}_vbm.{fmt}"
+            plot_vb_edge(
+                spectrum.crop(*region.range) if region.range else spectrum,
+                edge,
+                target,
+                title=f"{sample} - {region.name}",
+                style=options.figure_style,
+            )
+            rr.outputs[fmt] = str(target)
+    return rr
 
 
 def _pick_reference_component(selection: SelectionResult, component: str | None) -> Any:
@@ -306,6 +344,9 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
 
     # ---- Auger parameter -------------------------------------------------------------
     for spectrum, region in auger_regions:
+        if region.report == "vbm":
+            report.regions.append(_vbm_report(path, str(sample), spectrum, region, options))
+            continue
         rr = RegionReport(str(path), str(sample), region.name, "reported")
         hv = _photon_energy(spectrum, recipe, options)
         info = _auger_report(spectrum, region, hv)
@@ -496,6 +537,14 @@ def write_summary(batch: BatchReport, options: RunOptions) -> dict[str, str]:
                 row["warnings"] = "; ".join(v.message for v in r.selection.best.warnings)
             if r.auger:
                 row.update({f"auger_{k}": v for k, v in r.auger.items() if k != "region"})
+            if r.vbm:
+                row.update(
+                    vbm_eV=r.vbm["vbm_eV"],
+                    vbm_err=r.vbm["vbm_err"],
+                    vbm_window_spread_eV=r.vbm["window_spread_eV"],
+                    vbm_band_maximum_eV=r.vbm["band_maximum_eV"],
+                    vbm_edge_eV=" - ".join(f"{e:.2f}" for e in r.vbm["edge"]["range_eV"]),
+                )
             row["messages"] = " | ".join(m for m in r.messages if m)
             region_rows.append(row)
         if f.quantification is not None:

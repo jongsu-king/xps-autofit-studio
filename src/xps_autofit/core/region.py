@@ -16,6 +16,8 @@ AUTO = "auto"
 AUTO_BACKGROUNDS = ("shirley", "tougaard", "linear")
 AUTO_SHAPES = ("voigt", "pseudo_voigt")
 OPTIMIZERS = ("leastsq", "global")
+REPORTS = (None, "auger_max", "vbm")
+"""What a report-only region (``fit: false``) reports."""
 
 
 @dataclass(frozen=True)
@@ -145,7 +147,12 @@ class RegionSpec:
     """``False`` for report-only regions (e.g. an Auger line whose maximum is used for
     the Auger parameter)."""
     report: str | None = None
-    """``"auger_max"``: report the kinetic energy of the maximum (for Auger parameters)."""
+    """``"auger_max"``: report the kinetic energy of the maximum (for Auger parameters);
+    ``"vbm"``: report the valence-band maximum by linear extrapolation of the leading
+    edge (:func:`~xps_autofit.automation.valence_band.find_vb_edge`)."""
+    vbm_edge_window: tuple[float, float] = (0.2, 0.6)
+    """``report: vbm``: fractions of the rise to the first band maximum fitted as the
+    edge."""
     auger_pair: str | None = None
     """Name of the photoelectron region whose main line pairs with this Auger line."""
     notes: str = ""
@@ -172,6 +179,13 @@ class RegionSpec:
 
         if self.loss not in LOSSES:
             raise ValueError(f"loss must be one of {LOSSES}")
+        if self.report not in REPORTS:
+            raise ValueError(f"report must be one of {', '.join(r for r in REPORTS if r)}")
+        if self.report == "vbm" and self.fit:
+            raise ValueError(f"{self.name}: a 'report: vbm' region needs 'fit: false'")
+        lo_f, hi_f = self.vbm_edge_window
+        if not 0.0 <= lo_f < hi_f <= 1.0:
+            raise ValueError("vbm_edge_window needs 0 <= low < high <= 1")
         labels = {c.label for c in self.candidates}
         for cand in self.candidates:
             for kind, link in cand.links.items():
@@ -258,6 +272,7 @@ class RegionSpec:
             "require_assignment": self.require_assignment,
             "fit": self.fit,
             "report": self.report,
+            **({"vbm_edge_window": list(self.vbm_edge_window)} if self.report == "vbm" else {}),
             "auger_pair": self.auger_pair,
             "notes": self.notes,
         }
@@ -309,6 +324,11 @@ class RegionSpec:
             require_assignment=bool(d.get("require_assignment", False)),
             fit=bool(d.get("fit", True)),
             report=d.get("report"),
+            vbm_edge_window=(
+                (float(d["vbm_edge_window"][0]), float(d["vbm_edge_window"][1]))
+                if d.get("vbm_edge_window")
+                else (0.2, 0.6)
+            ),
             auger_pair=d.get("auger_pair"),
             notes=str(d.get("notes", "")),
         )

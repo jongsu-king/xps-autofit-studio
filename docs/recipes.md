@@ -76,6 +76,11 @@ regions:
     fit: false                 # report-only region
     report: auger_max          # kinetic energy of the smoothed maximum
     auger_pair: Cu 2p3/2       # photoelectron region for alpha' = BE + KE
+  - name: VB
+    range: [-3.0, 12.0]
+    fit: false
+    report: vbm                # valence-band maximum by linear extrapolation
+    vbm_edge_window: [0.2, 0.6] # fractions of the rise fitted as the leading edge
 ```
 
 `background: {type: auto}` fits every background in `shirley, tougaard, linear`,
