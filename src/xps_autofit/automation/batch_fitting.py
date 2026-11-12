@@ -71,6 +71,8 @@ class RegionReport:
     auger: dict[str, Any] | None = None
     vbm: dict[str, Any] | None = None
     """``report: vbm`` regions: :meth:`VBEdge.to_dict` of the valence-band edge."""
+    vb: tuple[Spectrum, Any] | None = field(default=None, repr=False)
+    """``report: vbm`` regions: the cropped spectrum and the ``VBEdge`` (for the report)."""
     assignments: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     messages: list[str] = field(default_factory=list)
 
@@ -204,6 +206,7 @@ def _vbm_report(
         rr.messages.append(f"no valence-band edge: {exc}")
         return rr
     rr.vbm = edge.to_dict()
+    rr.vb = (spectrum.crop(*region.range) if region.range else spectrum, edge)
     rr.messages.extend(edge.notes)
     if region.notes.strip():
         rr.messages.append(region.notes.strip())
@@ -375,9 +378,14 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
 
 
 def _write_file_report(path: Path, report: FileReport, recipe: Recipe, options: RunOptions) -> Path:
-    from ..export.report import ReportRegion, write_report
+    from ..export.report import ReportRegion, ReportVB, write_report
 
     regions = []
+    bands = [
+        ReportVB(rr.region, rr.vb[0], rr.vb[1], rr.vb[0].name)
+        for rr in report.regions
+        if rr.vb is not None
+    ]
     for rr in report.regions:
         sel = rr.selection
         if sel is None or sel.best is None:
@@ -408,6 +416,7 @@ def _write_file_report(path: Path, report: FileReport, recipe: Recipe, options: 
         source=str(path),
         recipe=recipe.name,
         style=options.figure_style,
+        valence_bands=bands,
     )
 
 

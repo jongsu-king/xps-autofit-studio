@@ -2256,7 +2256,7 @@ class MainWindow(QMainWindow):
 
     def export_report(self, path: str | Path) -> Path | None:
         """PDF of the current file: every fitted region of it and its composition."""
-        from ..export.report import ReportRegion, write_report
+        from ..export.report import ReportRegion, ReportVB, write_report
 
         cur = self.current()
         if cur is None:
@@ -2264,6 +2264,16 @@ class MainWindow(QMainWindow):
             return None
         key, item = cur
         regions: list[ReportRegion] = []
+        bands = [
+            ReportVB(
+                "VB",
+                self.session.items[k].spectrum,
+                self.vb_edges[k],
+                self.session.items[k].display_name,
+            )
+            for k in self.session.siblings(key)
+            if k in self.vb_edges
+        ]
         for k in self.session.siblings(key):
             st = self.session.results.get(k)
             if st is None or st.result is None or st.selection is None:
@@ -2288,7 +2298,7 @@ class MainWindow(QMainWindow):
                     assignments=assignments,
                 )
             )
-        if not regions:
+        if not regions and not bands:
             self.log("nothing to report: fit the regions of this file first")
             return None
         recipe = self.session.recipe
@@ -2302,9 +2312,11 @@ class MainWindow(QMainWindow):
             sample=item.path.stem,
             source=str(item.path),
             recipe=recipe.name if recipe is not None else "manual settings",
+            valence_bands=bands,
         )
         self.settings_store.setValue("export_dir", str(p.parent))
-        self.log(f"report: {p} ({len(regions)} region(s))")
+        extra = f", {len(bands)} valence band(s)" if bands else ""
+        self.log(f"report: {p} ({len(regions)} region(s){extra})")
         return p
 
     # ------------------------------------------------------------------ Origin

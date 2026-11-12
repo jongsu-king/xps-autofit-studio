@@ -421,65 +421,80 @@ def plot_vb_edge(
     :func:`xps_autofit.automation.valence_band.find_vb_edge` and the VBM marked."""
     _check_style(style)
     look = _ORIGIN if style == "origin" else _CLASSIC
-    family = origin_font_family() if style == "origin" else None
-    font: dict[str, Any] = {"fontfamily": family} if family else {}
-    x = np.asarray(spectrum.energy, dtype=float)
-    y = np.asarray(spectrum.intensity, dtype=float)
     with plt.rc_context(_rc(style)):
         fig, ax = plt.subplots(figsize=(5.2, 3.8))
-        fig.patch.set_facecolor(look.surface)
-        _style_axes(ax, style, look.surface)
-        if family:
-            ax.tick_params(labelfontfamily=family)
-        ax.plot(
-            x,
-            y,
-            "o",
-            ms=2.6,
-            mfc="none" if style == "origin" else look.raw,
-            mec=look.raw,
-            mew=0.6,
-            label="Raw",
-        )
-        lo = min(edge.baseline.lo, edge.vbm) - 0.3
-        hi = edge.edge.hi + 0.6
-        xb = np.linspace(min(edge.baseline.lo, lo), edge.vbm + 0.8, 50)
-        xe = np.linspace(edge.vbm - 0.1, hi, 50)
-        ax.plot(xb, edge.baseline(xb), color=SERIES[1], lw=1.3, label="Baseline")
-        ax.plot(xe, edge.edge(xe), color=SERIES[0], lw=1.3, label="Leading edge")
-        err = f" ± {edge.vbm_err:.2f}" if edge.vbm_err is not None else ""
-        ax.axvline(edge.vbm, color=look.text, lw=0.8, ls="--")
-        ax.annotate(
-            f"VBM {edge.vbm:.2f}{err} eV",
-            (edge.vbm, float(edge.baseline(edge.vbm))),
-            xytext=(8, 40),
-            textcoords="offset points",
-            fontsize=8,
-            color=look.text,
-            arrowprops={"arrowstyle": "-", "color": look.text, "lw": 0.6},
-            **font,
-        )
-        ax.set_xlim(float(x.max()), float(x.min()))  # binding energy decreasing to the right
-        span = float(np.max(y) - np.min(y))
-        ax.set_ylim(float(np.min(y)) - 0.05 * span, float(np.max(y)) + 0.08 * span)
-        ax.set_xlabel("Binding energy (eV)", fontsize=9, color=look.text, **font)
-        unit = spectrum.intensity_unit or "counts"
-        ax.set_ylabel(f"Intensity ({unit})", fontsize=9, color=look.text, **font)
-        if style == "origin":
-            ax.xaxis.set_minor_locator(AutoMinorLocator())
-            ax.yaxis.set_minor_locator(AutoMinorLocator())
-        legend_kwargs: dict[str, Any] = {"loc": "upper right"}
-        if style == "origin":
-            legend_kwargs.update(
-                frameon=True, edgecolor="black", fancybox=False, prop={"family": family, "size": 8}
-            )
-        else:
-            legend_kwargs.update(frameon=False, fontsize=8)
-        ax.legend(**legend_kwargs)
-        if title:
-            ax.set_title(title, fontsize=10, color=look.text, loc="left", **font)
+        draw_vb_edge(fig, ax, spectrum, edge, title, style)
         fig.tight_layout()
         if path is not None:
             fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=look.surface)
             plt.close(fig)
         return fig
+
+
+def draw_vb_edge(
+    fig: Figure,
+    ax: Any,
+    spectrum: Spectrum,
+    edge: VBEdge,
+    title: str = "",
+    style: str = DEFAULT_FIGURE_STYLE,
+) -> None:
+    """Draw the valence-band figure into ``ax`` (used by :func:`plot_vb_edge` and the
+    PDF report)."""
+    _check_style(style)
+    look = _ORIGIN if style == "origin" else _CLASSIC
+    family = origin_font_family() if style == "origin" else None
+    font: dict[str, Any] = {"fontfamily": family} if family else {}
+    x = np.asarray(spectrum.energy, dtype=float)
+    y = np.asarray(spectrum.intensity, dtype=float)
+    fig.patch.set_facecolor(look.surface)
+    _style_axes(ax, style, look.surface)
+    if family:
+        ax.tick_params(labelfontfamily=family)
+    ax.plot(
+        x,
+        y,
+        "o",
+        ms=2.6,
+        mfc="none" if style == "origin" else look.raw,
+        mec=look.raw,
+        mew=0.6,
+        label="Raw",
+    )
+    lo = min(edge.baseline.lo, edge.vbm) - 0.3
+    hi = edge.edge.hi + 0.6
+    xb = np.linspace(min(edge.baseline.lo, lo), edge.vbm + 0.8, 50)
+    xe = np.linspace(edge.vbm - 0.1, hi, 50)
+    ax.plot(xb, edge.baseline(xb), color=SERIES[1], lw=1.3, label="Baseline")
+    ax.plot(xe, edge.edge(xe), color=SERIES[0], lw=1.3, label="Leading edge")
+    err = f" ± {edge.vbm_err:.2f}" if edge.vbm_err is not None else ""
+    ax.axvline(edge.vbm, color=look.text, lw=0.8, ls="--")
+    ax.annotate(
+        f"VBM {edge.vbm:.2f}{err} eV",
+        (edge.vbm, float(edge.baseline(edge.vbm))),
+        xytext=(8, 40),
+        textcoords="offset points",
+        fontsize=8,
+        color=look.text,
+        arrowprops={"arrowstyle": "-", "color": look.text, "lw": 0.6},
+        **font,
+    )
+    ax.set_xlim(float(x.max()), float(x.min()))  # binding energy decreasing to the right
+    span = float(np.max(y) - np.min(y))
+    ax.set_ylim(float(np.min(y)) - 0.05 * span, float(np.max(y)) + 0.08 * span)
+    ax.set_xlabel("Binding energy (eV)", fontsize=9, color=look.text, **font)
+    unit = spectrum.intensity_unit or "counts"
+    ax.set_ylabel(f"Intensity ({unit})", fontsize=9, color=look.text, **font)
+    if style == "origin":
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
+        ax.yaxis.set_minor_locator(AutoMinorLocator())
+    legend_kwargs: dict[str, Any] = {"loc": "upper right"}
+    if style == "origin":
+        legend_kwargs.update(
+            frameon=True, edgecolor="black", fancybox=False, prop={"family": family, "size": 8}
+        )
+    else:
+        legend_kwargs.update(frameon=False, fontsize=8)
+    ax.legend(**legend_kwargs)
+    if title:
+        ax.set_title(title, fontsize=10, color=look.text, loc="left", **font)

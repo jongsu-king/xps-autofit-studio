@@ -178,6 +178,13 @@ def test_valence_band_edge_in_the_app(window, app, tmp_path):
     names = [item.name() for item in window.plot.main.listDataItems()]
     assert names == ["Raw", "Baseline", "Leading edge"]
     assert window.act_vbm.shortcut().toString() == "Ctrl+Shift+V"
+    # the PDF report of the file carries the valence band (summary + one page)
+    pdf = window.export_report(tmp_path / "vb_report.pdf")
+    raw = pdf.read_bytes()
+    assert raw.count(b"/Type /Page") - raw.count(b"/Type /Pages") == 2
+    assert "1 valence band(s)" in window.log_panel.toPlainText()
+    # a spectrum without a fit does not keep the last fit's residual scale
+    assert window.plot.resid.getViewBox().viewRange()[1] == pytest.approx([-1.0, 1.0])
     # a spectrum without an edge is reported, not drawn
     window.plot.show_spectrum(spec, "")
     flat = tmp_path / "flat.csv"

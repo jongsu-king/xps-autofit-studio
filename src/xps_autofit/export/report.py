@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import matplotlib
 
@@ -32,8 +32,13 @@ from .plots import (  # noqa: E402
     _check_style,
     _rc,
     draw_fit,
+    draw_vb_edge,
     origin_font_family,
 )
+
+if TYPE_CHECKING:
+    from ..automation.valence_band import VBEdge
+    from ..core.spectrum import Spectrum
 
 A4 = (8.27, 11.69)
 """Portrait page size in inches."""
@@ -52,6 +57,33 @@ class ReportRegion:
     notes: list[str] = field(default_factory=list)
     assignments: dict[str, str] = field(default_factory=dict)
     """Component label -> suggested chemical state (shown in the table)."""
+
+
+@dataclass
+class ReportVB:
+    """One valence-band maximum of the sample (``report: vbm`` or the app's action)."""
+
+    name: str
+    spectrum: Spectrum
+    edge: VBEdge
+    spectrum_name: str = ""
+
+
+def vb_rows(bands: Sequence[ReportVB]) -> list[list[str]]:
+    rows = []
+    for b in bands:
+        e = b.edge
+        rows.append(
+            [
+                b.name,
+                f"{e.vbm:.3f}",
+                f"{e.vbm_err:.3f}" if e.vbm_err is not None else "-",
+                f"{e.window_spread:.3f}" if e.window_spread is not None else "-",
+                f"{e.edge.lo:.2f} - {e.edge.hi:.2f}",
+                f"{e.band_maximum:.2f}",
+            ]
+        )
+    return rows
 
 
 def summary_rows(regions: Sequence[ReportRegion]) -> list[list[str]]:
@@ -152,8 +184,10 @@ def write_report(
     source: str = "",
     recipe: str = "",
     style: str = DEFAULT_FIGURE_STYLE,
+    valence_bands: Sequence[ReportVB] = (),
 ) -> Path:
-    """Write the PDF and return its path (one summary page + one page per region)."""
+    """Write the PDF and return its path: one summary page, one page per fitted region
+    and one per valence-band maximum."""
     _check_style(style)
     p = Path(path)
     family = origin_font_family() if style == "origin" else None
@@ -196,6 +230,25 @@ def write_report(
         if composition is not None:
             status = composition.status + (f" - {composition.note}" if composition.note else "")
             fig.text(0.07, y2 - 0.03 - h2, status[:400], fontsize=7, wrap=True, **font)
+        if valence_bands:
+            y3 = y2 - 0.013 - h2 - 0.09
+            fig.text(0.07, y3, "Valence band", fontsize=11, weight="bold", **font)
+            vrows = vb_rows(valence_bands)
+            h3 = _table_height(len(vrows))
+            ax = fig.add_axes((0.07, y3 - 0.013 - h3, 0.86, h3))
+            _table(
+                ax,
+                ["Region", "VBM (eV)", "+/-", "Window spread", "Edge (eV)", "Band max. (eV)"],
+                vrows,
+                font,
+            )
+            fig.text(
+                0.07,
+                y3 - 0.03 - h3,
+                "Linear extrapolation of the leading edge onto the baseline.",
+                fontsize=7,
+                **font,
+            )
         pdf.savefig(fig)
         plt.close(fig)
         # ---- one page per region
@@ -242,6 +295,30 @@ def write_report(
                     va="top",
                     **font,
                 )
+            pdf.savefig(fig)
+            plt.close(fig)
+        # ---- one page per valence-band maximum
+        for b in valence_bands:
+            fig = plt.figure(figsize=A4)
+            ax = fig.add_axes((0.12, 0.52, 0.8, 0.4))
+            draw_vb_edge(
+                fig, ax, b.spectrum, b.edge, f"{_page_title(b.spectrum_name, b.name)}", style
+            )
+            notes = [n for n in b.edge.notes if n]
+            lines = [
+                f"VBM {b.edge.vbm:.3f} eV"
+                + (f" +/- {b.edge.vbm_err:.3f}" if b.edge.vbm_err is not None else "")
+                + (
+                    f", +/- {b.edge.window_spread:.3f} with the edge window"
+                    if b.edge.window_spread is not None
+                    else ""
+                ),
+                f"Edge {b.edge.edge.lo:.2f}-{b.edge.edge.hi:.2f} eV ({b.edge.edge.n} points), "
+                f"baseline {b.edge.baseline.lo:.2f}-{b.edge.baseline.hi:.2f} eV "
+                f"({b.edge.baseline.n} points), first band maximum {b.edge.band_maximum:.2f} eV",
+                *notes,
+            ]
+            fig.text(0.12, 0.45, "\n".join(lines), fontsize=8, va="top", **font)
             pdf.savefig(fig)
             plt.close(fig)
         info = pdf.infodict()

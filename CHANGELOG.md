@@ -81,7 +81,9 @@ All notable changes to this project are documented here. The format follows
   `batch` write the VBM of every matching spectrum into `summary_regions.csv`
   (`vbm_eV`, `vbm_err`, `vbm_window_spread_eV`, `vbm_band_maximum_eV`,
   `vbm_edge_eV`) with a figure per file; the app's VBM action uses such a region of
-  the recipe in use. `report` is now checked (`auger_max` or `vbm`).
+  the recipe in use. `report` is now checked (`auger_max` or `vbm`). The file's PDF
+  report (`--formats report`, *Export report*) gets a valence-band table on the
+  summary page and a page per VBM (`export.plots.draw_vb_edge`).
 
 - *Edit link values…* in the Components table's context menu: type a centre offset
   or area ratio and the tolerance within which the fit may choose it.
@@ -95,6 +97,8 @@ All notable changes to this project are documented here. The format follows
   example P3HT C 1s (seed 6, behind the report of `example_dataset(seed=4)`) went
   from three components, reduced chi-square 5.9 and grade E to the four true
   components, 1.08 and grade B; over 12 seeds the right count went from 10 to 12.
+- The app's residual pane no longer keeps the scale of the last fit when a spectrum
+  without a fit (or a valence band) is shown.
 
 ### Changed
 - CI measures coverage in one job (ubuntu, Python 3.12) instead of all nine:

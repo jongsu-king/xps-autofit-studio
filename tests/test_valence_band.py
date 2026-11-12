@@ -147,13 +147,15 @@ def test_vbm_region_in_a_batch(tmp_path):
     assert region.to_dict()["vbm_edge_window"] == [0.2, 0.6]
     assert RegionSpec.from_dict(region.to_dict()) == region
     out = tmp_path / "out"
-    batch = run_batch([data], recipe, RunOptions(out, formats=("csv", "png")))
+    batch = run_batch([data], recipe, RunOptions(out, formats=("csv", "png", "report")))
     rows = pd.read_csv(out / "summary_regions.csv").set_index("sample")
     for stem, vbm in truths.items():
         assert rows.loc[stem, "status"] == "reported"
         assert abs(rows.loc[stem, "vbm_eV"] - vbm) < 0.05
         assert 0 < rows.loc[stem, "vbm_err"] < 0.05
         assert (out / f"{stem}__VB_vbm.png").exists()
+        pdf = (out / f"{stem}_report.pdf").read_bytes()
+        assert pdf.count(b"/Type /Page") - pdf.count(b"/Type /Pages") == 2  # summary + VB
     assert rows.loc["film_flat", "status"] == "failed"
     assert "no valence-band edge" in rows.loc["film_flat", "messages"]
     reports = {f.sample: f for f in batch.files}

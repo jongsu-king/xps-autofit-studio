@@ -294,7 +294,8 @@ Per file with `--formats report`: `<file>_report.pdf` - a summary page (file, re
 version and date, every region with status, component count, background / shape,
 reduced chi-square and grade, the composition with the source of each RSF) and one
 page per fitted region (figure, component table with suggested chemical states,
-selection notes).
+selection notes); `report: vbm` regions add a valence-band table to the summary page
+and a page per VBM with its figure.
 
 Per run: `summary_regions.csv` (with `grade`, `quality_score`, `durbin_watson`,
 `max_correlation`; `vbm_eV` and its error for `report: vbm` regions),

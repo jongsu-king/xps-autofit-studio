@@ -80,7 +80,9 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
    fitted region (status, component count, background / shape, reduced
    chi-square, grade) and the composition with the source of each sensitivity
    factor, then one page per region with the figure, the component table
-   (including the suggested chemical state) and the selection notes.
+   (including the suggested chemical state) and the selection notes. Valence-band
+   maxima found with *Analysis > Valence-band edge* on spectra of the file add a
+   table to the first page and one page each with the figure.
    **Save plot image…** (Ctrl+Shift+S) saves the live view as PNG; **Copy table**
    (Ctrl+Shift+C, or Ctrl+C inside a table) puts the current table on the clipboard
    as tab-separated text for a spreadsheet.

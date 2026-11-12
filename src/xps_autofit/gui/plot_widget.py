@@ -504,6 +504,9 @@ class SpectrumPlot(QWidget):
             vb = p.getViewBox()
             vb.autoRange(padding=0.04)
             vb.setXRange(lo, hi, padding=0.02)
+        if not self.resid.listDataItems():
+            # nothing to show (a spectrum without a fit): do not keep the last fit's scale
+            self.resid.getViewBox().setYRange(-1.0, 1.0, padding=0.0)
         o = self.options
         if o.x_range is not None:
             # Linked views with different axis widths differ slightly; the one set
