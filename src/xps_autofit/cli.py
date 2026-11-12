@@ -238,6 +238,33 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--photon-energy", type=float, default=None)
     ps.add_argument("--elements", default=None, help="comma list restricting the search")
 
+    pvb = sub.add_parser(
+        "vbm", help="valence-band maximum by linear extrapolation of the leading edge"
+    )
+    pvb.add_argument("files", nargs="+")
+    pvb.add_argument(
+        "--range", nargs=2, type=float, default=None, metavar=("LO", "HI"), help="crop (eV)"
+    )
+    pvb.add_argument(
+        "--edge-window",
+        nargs=2,
+        type=float,
+        default=(0.2, 0.6),
+        metavar=("LOW", "HIGH"),
+        help="fractions of the rise to the first band maximum fitted as the edge",
+    )
+    pvb.add_argument(
+        "--edge", nargs=2, type=float, default=None, metavar=("LO", "HI"), help="edge (eV)"
+    )
+    pvb.add_argument(
+        "--baseline", nargs=2, type=float, default=None, metavar=("LO", "HI"), help="(eV)"
+    )
+    pvb.add_argument("--photon-energy", type=float, default=None)
+    pvb.add_argument(
+        "--plot", default=None, help="folder for a figure per spectrum (<file>_vbm.png)"
+    )
+    pvb.add_argument("--json", action="store_true", help="print the results as JSON")
+
     pu = sub.add_parser("update-check", help="compare this version with the latest release")
     pu.add_argument("--json", action="store_true")
     pu.add_argument("--timeout", type=float, default=6.0)
@@ -598,6 +625,67 @@ def cmd_identify(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_vbm(args: argparse.Namespace) -> int:
+    import json
+
+    from .automation.valence_band import VBEdgeError, find_vb_edge
+
+    rc = 0
+    results = []
+    for f in args.files:
+        try:
+            spectra = read_spectra(f, photon_energy=args.photon_energy)
+        except Exception as exc:
+            print(f"{f}: cannot read ({exc})")
+            rc = 1
+            continue
+        for k, s in enumerate(spectra):
+            try:
+                edge = find_vb_edge(
+                    s.to_binding() if s.axis != "binding" else s,
+                    energy_range=tuple(args.range) if args.range else None,
+                    edge_window=tuple(args.edge_window),
+                    edge=tuple(args.edge) if args.edge else None,
+                    baseline=tuple(args.baseline) if args.baseline else None,
+                )
+            except (VBEdgeError, ValueError) as exc:
+                print(f"{f} {s.name!r}: {exc}")
+                rc = 1
+                continue
+            data = {"file": str(f), **edge.to_dict()}
+            if args.plot:
+                from .export.plots import plot_vb_edge
+
+                out = Path(args.plot)
+                out.mkdir(parents=True, exist_ok=True)
+                suffix = f"_{k + 1}" if len(spectra) > 1 else ""
+                target = out / f"{Path(f).stem}{suffix}_vbm.png"
+                plot_vb_edge(s, edge, target, title=s.name)
+                data["figure"] = str(target)
+            results.append(data)
+            if args.json:
+                continue
+            err = f" +/- {edge.vbm_err:.3f}" if edge.vbm_err is not None else ""
+            spread = (
+                f", window spread +/- {edge.window_spread:.3f}"
+                if edge.window_spread is not None
+                else ""
+            )
+            print(f"{f} {s.name!r}: VBM {edge.vbm:.3f}{err} eV{spread}")
+            print(
+                f"  edge {edge.edge.lo:.2f}-{edge.edge.hi:.2f} eV ({edge.edge.n} points), "
+                f"baseline {edge.baseline.lo:.2f}-{edge.baseline.hi:.2f} eV "
+                f"({edge.baseline.n} points), first band maximum {edge.band_maximum:.2f} eV"
+            )
+            for n in edge.notes:
+                print(f"  note: {n}")
+            if "figure" in data:
+                print(f"  figure: {data['figure']}")
+    if args.json:
+        print(json.dumps(results, indent=1))
+    return rc
+
+
 def cmd_update_check(args: argparse.Namespace) -> int:
     import json
 
@@ -638,6 +726,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_suggest(args)
     if args.command == "identify":
         return cmd_identify(args)
+    if args.command == "vbm":
+        return cmd_vbm(args)
     if args.command == "update-check":
         return cmd_update_check(args)
     if args.command == "fit":

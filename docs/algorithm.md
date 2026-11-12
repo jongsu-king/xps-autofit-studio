@@ -113,7 +113,18 @@ For each `n` from `min_components` to `max_components`:
    `sha256(data) | region name | n`.
 
 Each start is fitted with Levenberg-Marquardt (`lmfit.minimize`, method `leastsq`)
-and the lowest chi-square survives. With `optimizer: global` the first start of
+and the lowest chi-square survives, with one exception: when that fit fails the
+physical checks (section 5) and another start passes them *with* a covariance (so
+the significance checks really ran), the lowest chi-square of those is kept and the
+notes say so. Two overlapping components can slide together into a slightly lower
+minimum that breaks `min_separation` while the other starts of the same model end
+at an admissible one; keeping only the lowest minimum then discarded the whole
+component count. On synthetic P3HT C 1s (four components, 12 seeds) this took the
+right count from 10/12 to 12/12 and the worst reduced chi-square from 6.2 to 1.2
+(seed 6: the lowest start put C-C and C-S 0.56 eV apart, chi-square 219.3 vs 222.8
+for the truth-like start); S 2p and Cu 2p3/2 did not change. A start that passes
+only because no covariance could be computed does not count (Cu 2p3/2 seed 22: an
+n = 5 fit without error bars would otherwise have looked admissible). With `optimizer: global` the first start of
 every model is preceded by a differential-evolution search (SciPy, seeded from the
 same data-derived seed; areas and the background terms are given data-driven
 finite bounds) whose best point is then polished by Levenberg-Marquardt; the other
@@ -413,3 +424,36 @@ of the result states it. Bootstrap replicates of the region areas are divided by
 the same `D_i` before the atomic percentages and their intervals are formed
 (section 8), so the uncertainties follow the convention. The app's Composition
 tab and the batch `summary_quantification.csv` run this same code.
+
+## 13. Valence-band maximum
+
+`xps-autofit vbm` and *Analysis > Valence-band edge (VBM)* read the valence-band
+maximum the usual way: a straight line through the leading edge meets a straight
+line through the baseline below it (`automation/valence_band.py`).
+
+On a binding-energy axis increasing into the band, the spectrum is resampled to a
+uniform grid and Savitzky-Golay smoothed over 0.3 eV for locating things only. The
+baseline level is the median of the lowest-energy twentieth of the points, which
+must be flat (a rise of more than a tenth of the full rise there means the range
+starts on the edge, which is refused). The first band maximum is the lowest-energy
+maximum whose prominence is at least a fifth of the full rise. The **edge** is
+where the smoothed spectrum, scanning down from that maximum, lies between
+`edge_window` fractions (default 0.2-0.6) of the rise from the baseline to the
+maximum; the **baseline** runs from the lowest energy up to the foot of the edge
+(5 % of the rise) less one smoothing width. Both lines are fitted to the raw
+points, with Poisson weights for counts (the scale of the covariance is never put
+below counting statistics), and the VBM error follows from the two covariances.
+`window_spread` is half the range of VBMs from edge windows shifted by +/- 0.1 at
+either end - a measure of how straight the edge is; a spread above three standard
+errors is noted. With fewer than five baseline points the baseline is flat at the
+baseline level (noted). Explicit `--edge` / `--baseline` energy ranges replace the
+automatic windows.
+
+On synthetic valence bands (a density of states rising linearly from the VBM over
+2 eV, Gaussian resolution, Poisson noise; `synthesize_valence_band`), the VBM comes
+back within 0.03 eV for 0.3-0.5 eV resolution (VBM 0.8, 1.5 and 2.6 eV, three seeds
+each, standard errors 0.015-0.02 eV). At 0.9 eV resolution the rounded foot reaches
+into the default window and the extrapolation lands 0.03-0.08 eV low; raise the
+lower fraction (`--edge-window 0.3 0.7`) or give the edge explicitly for such data.
+Linear extrapolation itself is a convention: it ignores the tail of states above
+the edge and the instrument broadening, so compare VBMs read the same way.

@@ -38,8 +38,18 @@ from ..automation.peak_detection import residual_peak
 from ..automation.series import composition_series, series_origin_columns
 from ..automation.suggest import suggest_recipe
 from ..automation.survey_quant import SurveyQuant, quantify_survey
+from ..automation.valence_band import VBEdge, VBEdgeError, find_vb_edge
 from ..core.constraints import check_physical
-from ..core.fitting import ComponentSpec, FitResult, fit_peaks, specs_from_result
+from ..core.fitting import (
+    LINK_KINDS,
+    ComponentLink,
+    ComponentSpec,
+    FitError,
+    FitResult,
+    check_link_cycles,
+    fit_peaks,
+    specs_from_result,
+)
 from ..core.preprocessing import C1S_REFERENCE_WARNING
 from ..core.quantification import QuantCorrection
 from ..core.region import CandidateLine
@@ -149,6 +159,8 @@ class MainWindow(QMainWindow):
         self.last_update_info: UpdateInfo | None = None
         self.last_identification: Identification | None = None
         self.survey_quant: dict[str, SurveyQuant] = {}
+        self.vb_edges: dict[str, VBEdge] = {}
+        """Valence-band edges found with Analysis > Valence-band edge, by spectrum key."""
         """Survey composition estimates by spectrum key (filled by IDENTIFY)."""
 
         # ---- theme and plot style (persisted) and the central plot
@@ -230,6 +242,7 @@ class MainWindow(QMainWindow):
         self.plot.cursorMoved.connect(self._on_cursor_moved)
         self.components.componentEdited.connect(self._on_component_edited)
         self.components.componentLocked.connect(self._on_component_locked)
+        self.components.componentLinked.connect(self.link_component)
         self.components.componentRenamed.connect(self.rename_component)
         self.models.modelPicked.connect(self._show_model)
         self.settings.recipe_combo.currentIndexChanged.connect(self._on_recipe_combo)
@@ -386,6 +399,13 @@ class MainWindow(QMainWindow):
             "ageing series): table, plot, CSV and Origin export"
         )
         self.act_series.triggered.connect(self.composition_series_dialog)
+        self.act_vbm = QAction("Valence-band edge (VBM)", self)
+        self.act_vbm.setShortcut("Ctrl+Shift+V")
+        self.act_vbm.setToolTip(
+            "Valence-band maximum of the selected spectrum: a line through the leading "
+            "edge meets a line through the baseline below it"
+        )
+        self.act_vbm.triggered.connect(lambda: self.valence_band_edge())
         self.act_suggest = QAction("Suggest recipe from survey…", self)
         self.act_suggest.setToolTip(
             "After IDENTIFY: write a recipe with one region per element (range, doublet, RSF)"
@@ -463,6 +483,7 @@ class MainWindow(QMainWindow):
             self.act_uncertainty,
             self.act_identify,
             self.act_suggest,
+            self.act_vbm,
             self.act_series,
             self.act_rsf_library,
             self.act_clear_rsf_library,
@@ -931,8 +952,20 @@ class MainWindow(QMainWindow):
         st = self.session.results.get(key)
         if include_components and st is not None and st.result is not None:
             majors = st.result.majors()
+            labels = {c.label for c in majors}
+            specs = {s.label: s for s in st.result.specs}
             region.candidates = [
-                CandidateLine(label=c.label, center=c.center, window=0.5, note="fitted component")
+                CandidateLine(
+                    label=c.label,
+                    center=c.center,
+                    window=0.5,
+                    note="fitted component",
+                    links={
+                        k: link
+                        for k, link in (specs[c.label].links() if c.label in specs else {}).items()
+                        if link.target in labels
+                    },
+                )
                 for c in majors
             ]
             region.min_components = region.max_components = max(len(majors), 1)
@@ -1137,6 +1170,7 @@ class MainWindow(QMainWindow):
         key, item = cur
         self.session.remove(key)
         self.survey_quant.pop(key, None)
+        self.vb_edges.pop(key, None)
         self._current_key = None
         self.plot.show_spectrum(item.spectrum, "")
         self.components.show_result(None)
@@ -1632,6 +1666,57 @@ class MainWindow(QMainWindow):
         self.log(f"{label}: {what} {'free' if vary else 'fixed'}")
         self.refit(specs)
 
+    def link_component(self, label: str, kind: str, target: str) -> bool:
+        """Tie the centre / area / widths (``kind``) of component ``label`` to
+        component ``target`` at the current offset or ratio, and refit; an empty
+        ``target`` removes that link (an empty ``kind`` removes all of them).
+
+        Returns ``False`` (and logs why) when nothing was refitted.
+        """
+        cur = self.current()
+        if cur is None:
+            return False
+        pair = self._manual_specs(cur[0])
+        if pair is None:
+            return False
+        state, specs = pair
+        assert state.result is not None
+        spec = next((s for s in specs if s.label == label), None)
+        if spec is None or (kind and kind not in LINK_KINDS):
+            return False
+        if not target:
+            kinds = [kind] if kind else list(spec.links())
+            if not kinds or not any(getattr(spec, f"{k}_link") for k in kinds):
+                return False
+            for k in kinds:
+                setattr(spec, f"{k}_link", None)
+            self.log(f"{label}: {', '.join(kinds)} link removed")
+            return self.refit(specs)
+        majors = {m.label: m for m in state.result.majors()}
+        if target == label or target not in majors or label not in majors:
+            self.log(f"{label}: cannot link to {target!r}")
+            return False
+        own, other = majors[label], majors[target]
+        if kind == "center":
+            link = ComponentLink(target, round(own.center - other.center, 4))
+        elif kind == "area":
+            if other.area <= 0 or own.area <= 0:
+                self.log(f"{label}: an area link needs both areas above zero")
+                return False
+            link = ComponentLink(target, float(f"{own.area / other.area:.4g}"))
+        else:
+            link = ComponentLink(target)
+        previous = getattr(spec, f"{kind}_link")
+        setattr(spec, f"{kind}_link", link)
+        try:
+            check_link_cycles(specs)
+        except FitError as exc:
+            setattr(spec, f"{kind}_link", previous)
+            self.log(f"{label}: {exc}")
+            return False
+        self.log(f"{label}: {kind} linked to {link.describe(kind)}")
+        return self.refit(specs)
+
     def _on_component_edited(self, label: str, field: str, value: float) -> None:
         cur = self.current()
         if cur is None:
@@ -1691,6 +1776,10 @@ class MainWindow(QMainWindow):
             self.log("select a component row to remove (at least one must remain)")
             return
         specs = [s for s in specs if s.label != label]
+        for s in specs:  # links to the removed component go with it
+            for kind, link in s.links().items():
+                if link.target == label:
+                    setattr(s, f"{kind}_link", None)
         self.log(f"removed {label}")
         self.refit(specs)
 
@@ -1718,6 +1807,48 @@ class MainWindow(QMainWindow):
         self.diagnostics.display(cand.result, state.selection, status)
 
     # ------------------------------------------------------------- identification
+    def valence_band_edge(
+        self,
+        edge_window: tuple[float, float] = (0.2, 0.6),
+        figure: str | Path | None = None,
+    ) -> VBEdge | None:
+        """Valence-band maximum of the selected spectrum by linear extrapolation of the
+        leading edge (:func:`~xps_autofit.automation.valence_band.find_vb_edge`); the
+        plot shows both lines and the VBM, ``figure`` also writes the export figure."""
+        cur = self.current()
+        if cur is None:
+            self.log("select a valence-band spectrum first")
+            return None
+        key, item = cur
+        spectrum = item.spectrum
+        try:
+            edge = find_vb_edge(spectrum, edge_window=edge_window)
+        except (VBEdgeError, ValueError) as exc:
+            self.log(f"{item.display_name}: no valence-band edge ({exc})")
+            return None
+        self.vb_edges[key] = edge
+        self.plot.show_vb_edge(spectrum, edge, f"{item.display_name} - valence band")
+        err = f" ± {edge.vbm_err:.3f}" if edge.vbm_err is not None else ""
+        spread = (
+            f", ± {edge.window_spread:.3f} with the edge window"
+            if edge.window_spread is not None
+            else ""
+        )
+        self.log(
+            f"{item.display_name}: VBM {edge.vbm:.3f}{err} eV{spread}; edge "
+            f"{edge.edge.lo:.2f}-{edge.edge.hi:.2f} eV, baseline {edge.baseline.lo:.2f}-"
+            f"{edge.baseline.hi:.2f} eV, first band maximum {edge.band_maximum:.2f} eV"
+        )
+        for n in edge.notes:
+            self.log(f"  {n}")
+        self.statusBar().showMessage(f"VBM {edge.vbm:.2f}{err} eV", 8000)
+        if figure is not None:
+            from ..export.plots import plot_vb_edge
+
+            plot_vb_edge(spectrum, edge, figure, title=item.display_name)
+            self.log(f"VBM figure: {figure}")
+        return edge
+
     def identify_current(self, tolerance: float = 1.5, min_confidence: float = 0.3) -> bool:
         """Identify the elements in the selected spectrum (meant for surveys)."""
         cur = self.current()

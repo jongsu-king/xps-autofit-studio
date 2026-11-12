@@ -123,6 +123,43 @@ range must be covered).
 
 `xps-autofit recipes --show <name>` prints a built-in recipe in this format.
 
+## Links between components
+
+A candidate can tie its centre, area or line shape to another candidate of the same
+region, like the `A + 1.2`, `A * 0.5` and `A` constraints of CasaXPS:
+
+```yaml
+    candidates:
+      - {label: C-C/C-H, center: 284.8, window: 0.6}
+      - label: C-O
+        center: 286.4
+        window: 0.5
+        links: {width: C-C/C-H}            # same FWHM (and mixing / asymmetry)
+      - label: pi-pi* shake-up
+        center: 291.2
+        window: 1.0
+        links:
+          center: [C-C/C-H, 6.4, 0.3]      # C-C/C-H + 6.4 eV, free within +/- 0.3 eV
+          area: [C-C/C-H, 0.05, 0.03]      # 0.05 x C-C/C-H, free within 0.02-0.08
+```
+
+`center: [target, offset]` and `area: [target, ratio]` fix the offset or ratio; a
+third number is a tolerance within which it is fitted. `width: target` (or
+`[target]`) makes every line-shape parameter of the component (FWHM G and L or the
+GL width, the GL mixing, the DS asymmetry) that of the target; with a doublet both
+lines follow. A linked centre or width leaves its own window or bounds and follows
+the target, and two centres tied this way are exempt from `min_separation`. Links
+cost no free parameter (a tolerance adds one: the offset or ratio), so the
+criterion sees the simpler model.
+
+A link applies whenever its target is part of the model; for a component count
+that leaves the target out, the component is free and the fit carries a warning
+(`... link to 'C-C/C-H' ignored`). A link to a label that is not a candidate of the
+region, or a cycle (A follows B and B follows A), is an error when the recipe
+loads. Links travel with the component specs into project, session and recipe
+files, the `links` column of `*_components.csv` / the Excel sheet, and the notes
+of the PDF report. In the app, right-click a row of the Components table.
+
 ## Instrument sensitivity factors
 
 A recipe may name the instrument's RSF library at the top level:

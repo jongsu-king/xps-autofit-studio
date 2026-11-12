@@ -170,3 +170,37 @@ def test_detect_and_pair_doublets(aged_s2p):
 def test_pair_doublets_keeps_unpaired():
     g = [PeakGuess(10.0, 100.0, 1.0, 100.0), PeakGuess(12.0, 90.0, 1.0, 90.0)]
     assert len(pair_doublets(g, 1.18, 0.5, 0.2)) == 2
+
+
+def test_a_degenerate_lowest_start_does_not_discard_the_component_count():
+    """C 1s seed 6: the lowest chi-square start of n=4 slides C-C and C-S 0.56 eV
+    apart (< 0.6) while the other starts end at the truth; n=4 must survive."""
+    spec, truth = synthesize(p3ht_c1s(), seed=6)
+    sel = select_model(spec, load_recipe("p3ht").region("C 1s"))
+    assert sel.status == "ok" and sel.best.n_components == 4
+    assert sel.best.result.stats.redchi < 1.3
+    got = {c.label: c for c in sel.best.result.majors()}
+    for t in truth["components"]:
+        assert_close(got[t["label"]].center, t["center"], abs_=0.1)
+    assert any("kept the best start that passes" in n for n in sel.notes)
+
+
+def test_pick_start_rules():
+    from types import SimpleNamespace
+
+    from xps_autofit.automation.model_selection import pick_start
+    from xps_autofit.core.constraints import Violation
+
+    def fit(chisqr, errorbars=True, bad=False):
+        result = SimpleNamespace(stats=SimpleNamespace(chisqr=chisqr, errorbars=errorbars))
+        return (result, [Violation("too_close", "x")] if bad else [], [])
+
+    low_ok, other_ok = fit(10.0), fit(11.0)
+    assert pick_start([other_ok, low_ok]) is low_ok
+    low_bad, rescue, unchecked = fit(9.0, bad=True), fit(12.0), fit(10.5, errorbars=False)
+    assert pick_start([low_bad, unchecked, rescue]) is rescue
+    # passing only because no covariance was available is not a rescue
+    assert pick_start([low_bad, unchecked]) is low_bad
+    # an admissible lowest start is kept even without error bars (unchanged behaviour)
+    low_unchecked = fit(8.0, errorbars=False)
+    assert pick_start([low_unchecked, rescue]) is low_unchecked

@@ -155,3 +155,41 @@ def test_remove_spectrum_and_save_plot(window, app, data_dir, tmp_path):
 
 def test_diagnostics_text_without_result():
     assert diagnostics_text(None, None).startswith("No fit yet")
+
+
+def test_valence_band_edge_in_the_app(window, app, tmp_path):
+    from xps_autofit.synthetic import synthesize_valence_band
+
+    spec, truth = synthesize_valence_band(vbm=1.5, seed=2)
+    path = tmp_path / "vb.csv"
+    rows = [f"{a:.3f},{int(b)}" for a, b in zip(spec.energy, spec.intensity)]
+    path.write_text("Binding Energy (eV),Counts\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    assert window.valence_band_edge() is None  # nothing selected
+    keys = window.load_files([str(path)])
+    window.select_key(keys[0])
+    figure = tmp_path / "vb_vbm.png"
+    edge = window.valence_band_edge(figure=figure)
+    app.processEvents()
+    assert edge is not None and abs(edge.vbm - truth["vbm"]) < 0.05
+    assert window.vb_edges[keys[0]] is edge
+    assert figure.stat().st_size > 10_000
+    log = window.log_panel.toPlainText()
+    assert f"VBM {edge.vbm:.3f}" in log and "first band maximum" in log
+    names = [item.name() for item in window.plot.main.listDataItems()]
+    assert names == ["Raw", "Baseline", "Leading edge"]
+    assert window.act_vbm.shortcut().toString() == "Ctrl+Shift+V"
+    # a spectrum without an edge is reported, not drawn
+    window.plot.show_spectrum(spec, "")
+    flat = tmp_path / "flat.csv"
+    flat.write_text(
+        "Binding Energy (eV),Counts\n" + "\n".join(f"{e:.3f},50" for e in spec.energy) + "\n",
+        encoding="utf-8",
+    )
+    k2 = window.load_files([str(flat)])
+    window.select_key(k2[0])
+    assert window.valence_band_edge() is None
+    assert "no valence-band edge" in window.log_panel.toPlainText()
+    # removing the spectrum forgets its edge
+    window.select_key(keys[0])
+    window.remove_current_spectrum()
+    assert keys[0] not in window.vb_edges

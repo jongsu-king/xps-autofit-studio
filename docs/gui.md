@@ -135,6 +135,17 @@ factor makes the sample `NOT_CALCULABLE` and the row red rather than guessed.
 *Copy table* puts it on the clipboard. A survey that has been through IDENTIFY and
 has no fitted region shows its survey estimate here instead, marked as such.
 
+## Valence-band edge
+
+**Analysis > Valence-band edge (VBM)** (Ctrl+Shift+V) reads the valence-band maximum
+of the selected spectrum: a line through the leading edge meets a line through the
+baseline below it (`algorithm.md`, section 13). The plot shows both lines and the
+VBM; the log gives the VBM with its standard error, how far it moves with the edge
+window, the energy ranges used and the first band maximum. Load the valence-band
+region with some baseline below the edge (to about -2 eV); a range that starts on
+the edge is refused with a message. `xps-autofit vbm` does the same from the
+command line, with explicit windows and an Origin-style figure.
+
 ## Composition series
 
 **Analysis > Composition series…** (Ctrl+Shift+T) collects the composition of every
@@ -205,6 +216,17 @@ somewhere else: the refit keeps it exactly there); *Fix W* holds its widths
 as a manual edit (undo works) and is written into the project and session files
 (`vary_center`, `vary_width` of the component spec), so a batch run from such a
 project reproduces the locked fit.
+
+Right-click a component for **Link centre to / Link area to / Link widths to**:
+the centre then follows the chosen component at the current offset, the area at
+the current ratio, the widths (FWHM G and L, mixing, asymmetry) exactly. Linked
+cells are shown in italics, are not editable, and carry the link in their tooltip
+(`= C-C/C-H + 1.600 eV`); the same menu removes one link or all of them. A link
+that would close a cycle is refused. Renaming the target keeps the link, removing
+it drops the links to it. Links are written like the locks (project and session
+files, the `links` column of the component table); *save settings as recipe* with
+the fitted components writes them into the candidates, and a recipe can give them a
+tolerance (`recipes.md`, "Links between components").
 
 ## Saving the settings as a recipe
 

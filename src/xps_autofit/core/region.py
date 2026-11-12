@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .background import ACTIVE_TYPES, BACKGROUND_MODES, BACKGROUND_TYPES, BackgroundSpec
 from .constraints import DoubletSpec, PeakConstraints
 from .peak_shapes import SHAPES
+
+if TYPE_CHECKING:
+    from .fitting import ComponentLink
 
 AUTO = "auto"
 AUTO_BACKGROUNDS = ("shirley", "tougaard", "linear")
@@ -51,6 +54,10 @@ class CandidateLine:
     fwhm_g: tuple[float, float] | None = None
     """Optional per-candidate Gaussian width bounds (e.g. broad satellites)."""
     note: str = ""
+    links: dict[str, ComponentLink] = field(default_factory=dict)
+    """Ties to other candidates of the region (``center`` / ``area`` / ``width``,
+    see :class:`~xps_autofit.core.fitting.ComponentLink`); applied whenever the target
+    is part of the model, ignored otherwise."""
 
     @property
     def bounds(self) -> tuple[float, float]:
@@ -62,17 +69,27 @@ class CandidateLine:
             d["fwhm_g"] = list(self.fwhm_g)
         if self.note:
             d["note"] = self.note
+        if self.links:
+            d["links"] = {k: v.to_list(k) for k, v in self.links.items()}
         return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CandidateLine:
+        from .fitting import FitError, parse_links
+
         fw = d.get("fwhm_g")
+        label = str(d["label"])
+        try:
+            parsed = parse_links(d.get("links"), label)
+        except FitError as exc:
+            raise ValueError(str(exc)) from None
         return cls(
-            label=str(d["label"]),
+            label=label,
             center=float(d["center"]),
             window=float(d.get("window", 0.5)),
             fwhm_g=(float(fw[0]), float(fw[1])) if fw else None,
             note=str(d.get("note", "")),
+            links=parsed,
         )
 
 
@@ -151,10 +168,23 @@ class RegionSpec:
             raise ValueError(f"background mode must be 'auto' or one of {BACKGROUND_MODES}")
         if self.optimizer not in OPTIMIZERS:
             raise ValueError(f"optimizer must be one of {OPTIMIZERS}")
-        from .fitting import LOSSES
+        from .fitting import LOSSES, ComponentSpec, FitError, check_link_cycles
 
         if self.loss not in LOSSES:
             raise ValueError(f"loss must be one of {LOSSES}")
+        labels = {c.label for c in self.candidates}
+        for cand in self.candidates:
+            for kind, link in cand.links.items():
+                if link.target not in labels:
+                    raise ValueError(
+                        f"{self.name}: {cand.label}: {kind} link to {link.target!r}, which is "
+                        "not a candidate of this region"
+                    )
+        specs = [ComponentSpec(c.label, c.center).set_links(dict(c.links)) for c in self.candidates]
+        try:
+            check_link_cycles(specs)
+        except FitError as exc:
+            raise ValueError(f"{self.name}: {exc}") from None
 
     @property
     def candidate_windows(self) -> list[tuple[str, float, float]]:

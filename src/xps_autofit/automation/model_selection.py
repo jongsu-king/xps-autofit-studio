@@ -2,8 +2,9 @@
 with statistics *and* physics.
 
 For each variant (background type x shape) and each component count ``n`` in the
-allowed range, several initial guesses are fitted and the best (lowest chi-square) is
-kept.  Models are then ranked by AICc (or BIC) *among those that pass the physical
+allowed range, several initial guesses are fitted and the lowest chi-square fit that
+passes the physical checks is kept (the lowest overall when none passes; see
+:func:`pick_start`).  Models are then ranked by AICc (or BIC) *among those that pass the physical
 checks* in :func:`check_physical`, with a parsimony margin.  If no model passes, the
 statistically best one is returned with status ``needs_review``; if another valid
 model lies within the margin the status is ``ambiguous``.
@@ -186,6 +187,8 @@ def specs_from_guesses(
             fwhm_g_bounds=fgb,
             doublet=region.doublet,
         )
+        if cand is not None:
+            spec.set_links(dict(cand.links))
         for w, v in widths.items():
             setattr(spec, w, v)
         specs.append(spec)
@@ -345,6 +348,28 @@ def make_starts(
     return starts
 
 
+def pick_start(
+    fits: list[tuple[FitResult, list[Violation], list[Violation]]],
+) -> tuple[FitResult, list[Violation], list[Violation]]:
+    """The fit kept for one component count, from ``(result, violations, warnings)``
+    of every start.
+
+    The lowest chi-square fit, unless it fails the physical checks and another start
+    passes them with error bars; then the lowest chi-square of those.  Two overlapping
+    components can trade area and slide together, so a start may end in a slightly
+    lower minimum that fails a check (two centres closer than ``min_separation``)
+    while another start of the same model ends in an admissible one.  Keeping only the
+    lowest minimum would discard the whole component count and push the selection to a
+    smaller model with a far worse fit.  A start without a covariance does not count
+    as admissible here: its significance checks could not run.
+    """
+    lowest = min(fits, key=lambda f: f[0].stats.chisqr)
+    if not lowest[1]:
+        return lowest
+    checked = [f for f in fits if not f[1] and f[0].stats.errorbars]
+    return min(checked, key=lambda f: f[0].stats.chisqr) if checked else lowest
+
+
 def despiked_intensity(
     spec: Spectrum, spike_sigma: float | None, notes: list[str], tag: str = ""
 ) -> np.ndarray:
@@ -414,7 +439,7 @@ def _fit_variant(
         starts = make_starts(
             n, majors, prev, spec.energy, y_net, region, fwhm_hint, rng, n_starts, shape
         )
-        best: FitResult | None = None
+        fits: list[tuple[FitResult, list[Violation], list[Violation]]] = []
         failures = 0
         for i, specs in enumerate(starts):
             use = settings
@@ -427,22 +452,29 @@ def _fit_variant(
             except FitError:
                 failures += 1
                 continue
-            if best is None or r.stats.chisqr < best.stats.chisqr:
-                best = r
-        if best is None:
+            relabel_generic(r, region)
+            violations, warnings = check_physical(
+                r,
+                region.constraints,
+                spec.range,
+                region.candidate_windows or None,
+                region.require_assignment,
+                noise_sigma=noise.sigma,
+            )
+            fits.append((r, violations, warnings))
+        if not fits:
             notes.append(f"{tag} n={n}: all {len(starts)} starts failed")
             continue
         if failures:
             notes.append(f"{tag} n={n}: {failures}/{len(starts)} starts failed")
-        relabel_generic(best, region)
-        violations, warnings = check_physical(
-            best,
-            region.constraints,
-            spec.range,
-            region.candidate_windows or None,
-            region.require_assignment,
-            noise_sigma=noise.sigma,
-        )
+        best, violations, warnings = pick_start(fits)
+        lowest = min(fits, key=lambda f: f[0].stats.chisqr)
+        if lowest[0] is not best:
+            notes.append(
+                f"{tag} n={n}: the lowest chi-square start ({lowest[0].stats.chisqr:.1f}) fails "
+                + "; ".join(v.message for v in lowest[1])
+                + f"; kept the best start that passes ({best.stats.chisqr:.1f})"
+            )
         candidates.append(
             Candidate(
                 n,

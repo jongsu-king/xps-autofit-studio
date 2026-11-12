@@ -30,10 +30,17 @@ COMPONENT_COLUMNS = [
     "fraction_pct",
     "component_fraction_pct",
     "height",
+    "links",
 ]
 
 
 def components_table(result: FitResult) -> pd.DataFrame:
+    """One row per line; ``links`` says which parameters follow another component
+    (empty for free components and for minor doublet lines)."""
+    links = {
+        s.label: "; ".join(f"{k} = {v.describe(k)}" for k, v in s.links().items())
+        for s in result.specs
+    }
     rows = []
     for c in result.components:
         rows.append(
@@ -58,6 +65,7 @@ def components_table(result: FitResult) -> pd.DataFrame:
                 "fraction_pct": c.fraction,
                 "component_fraction_pct": c.component_fraction,
                 "height": c.height,
+                "links": "" if c.is_minor else links.get(c.parent, ""),
             }
         )
     return pd.DataFrame(rows, columns=COMPONENT_COLUMNS)

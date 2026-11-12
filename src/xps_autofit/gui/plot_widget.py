@@ -367,6 +367,40 @@ class SpectrumPlot(QWidget):
         self._set_label("main", "left", f"Intensity ({spectrum.intensity_unit})")
         self._fit_view(spectrum.energy)
 
+    def show_vb_edge(self, spectrum: Spectrum, edge: Any, title: str = "") -> None:
+        """A valence-band spectrum with the baseline and leading-edge lines of a
+        :class:`~xps_autofit.automation.valence_band.VBEdge` and the VBM marked."""
+        self._last = ("show_vb_edge", (spectrum, edge, title), {})
+        self._reset()
+        self._view_x = None
+        self._spectrum = spectrum
+        self._draw_raw(spectrum.energy, spectrum.intensity)
+        xb = np.linspace(min(edge.baseline.lo, edge.vbm - 0.5), edge.vbm + 0.8, 60)
+        xe = np.linspace(edge.vbm - 0.1, edge.edge.hi + 0.6, 60)
+        self.main.plot(
+            xb, edge.baseline(xb), pen=pg.mkPen(self._series_color(1), width=2), name="Baseline"
+        )
+        self.main.plot(
+            xe, edge.edge(xe), pen=pg.mkPen(self._series_color(0), width=2), name="Leading edge"
+        )
+        marker = pg.InfiniteLine(
+            pos=edge.vbm,
+            angle=90,
+            movable=False,
+            pen=pg.mkPen(self._eff.text, width=1, style=Qt.PenStyle.DashLine),
+            label=f"VBM {edge.vbm:.2f} eV",  # the error is in the log and the status bar
+            labelOpts={
+                "position": 0.5,
+                "color": self._eff.text,
+                "fill": _qcolor(self._eff.label_fill),
+                "anchors": [(0, 0.5), (1, 0.5)],
+            },
+        )
+        self.main.addItem(marker, ignoreBounds=True)
+        self.set_title(title)
+        self._set_label("main", "left", f"Intensity ({spectrum.intensity_unit})")
+        self._fit_view(spectrum.energy)
+
     def _draw_raw(self, x: np.ndarray, y: np.ndarray) -> None:
         s = self._eff
         self.main.plot(

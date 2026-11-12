@@ -246,6 +246,56 @@ def synthesize_survey(
     return spec, truth
 
 
+def synthesize_valence_band(
+    vbm: float = 1.5,
+    seed: int | None = 0,
+    lo: float = -3.0,
+    hi: float = 12.0,
+    step: float = 0.05,
+    ramp_eV: float = 2.0,
+    band_height: float = 4000.0,
+    resolution_fwhm: float = 0.5,
+    baseline: float = 60.0,
+    name: str = "valence band",
+) -> tuple[Spectrum, dict[str, Any]]:
+    """A valence-band spectrum whose density of states rises linearly from ``vbm``
+    over ``ramp_eV`` to a band of ``band_height`` counts (a broad O 2p-like band with a
+    deeper second band), broadened by a Gaussian of ``resolution_fwhm`` and given
+    Poisson noise.  The linear extrapolation of the broadened edge returns ``vbm``.
+    """
+    x = np.arange(lo, hi + step / 2, step)
+    # unbroadened DOS on a finer, wider grid so the convolution has no edge effects
+    fine = np.arange(lo - 3.0, hi + 3.0, step / 4)
+    rise = np.clip((fine - vbm) / ramp_eV, 0.0, 1.0)
+    top = vbm + ramp_eV
+    band = np.where(fine <= top, 1.0, np.exp(-0.5 * ((fine - top) / 2.2) ** 2))
+    second = 0.7 * np.exp(-0.5 * ((fine - (top + 4.0)) / 1.2) ** 2) * (fine > vbm)
+    dos = band_height * (rise * band + second)
+    sig = resolution_fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    kx = np.arange(-5 * sig, 5 * sig + step / 8, step / 4)
+    kernel = np.exp(-0.5 * (kx / sig) ** 2)
+    broadened = np.convolve(dos, kernel / kernel.sum(), mode="same")
+    clean = baseline + np.interp(x, fine, broadened)
+    rng = np.random.default_rng(seed)
+    y = rng.poisson(np.maximum(clean, 0.0)).astype(float)
+    spec = Spectrum(
+        x,
+        y,
+        name=name,
+        intensity_unit="counts",
+        metadata={"synthetic": True, "valence_band": True},
+    )
+    truth = {
+        "vbm": vbm,
+        "ramp_eV": ramp_eV,
+        "band_height": band_height,
+        "resolution_fwhm": resolution_fwhm,
+        "baseline": baseline,
+        "seed": seed,
+    }
+    return spec, truth
+
+
 def example_dataset(out_dir: str | Path, seed: int = 1) -> list[Path]:
     """Write a small example data set in several file formats and a ``truth.json``."""
     out = Path(out_dir)

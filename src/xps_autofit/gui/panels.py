@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QSpinBox,
     QTableWidget,
@@ -36,7 +37,7 @@ from ..core.background import (
     BackgroundSpec,
 )
 from ..core.constraints import DoubletSpec, PeakConstraints
-from ..core.fitting import LOSSES, FitResult
+from ..core.fitting import LINK_KINDS, LOSSES, FitResult
 from ..core.peak_shapes import SHAPES
 from ..core.quality import grade_fit
 from ..core.quantification import QuantResult
@@ -672,12 +673,18 @@ ASSIGNMENT_COLUMN = 12
 """Reference chemical state nearest to the centre (database, +/- 0.5 eV tolerance)."""
 LOCK_COLUMNS = {10: "vary_center", 11: "vary_width"}
 """Check-box columns: a tick fixes the centre / the widths of that component."""
+LINKED_COLUMNS = {"center": (1,), "area": (4,), "width": (3, 7, 8, 9)}
+"""Cells shown in italics (not editable) when the component's centre, area or widths
+follow another component."""
 
 
 class ComponentsTable(CopyableTable):
     componentEdited = Signal(str, str, float)  # parent label, field, value
     componentRenamed = Signal(str, str)  # parent label, new name typed into column 0
     componentLocked = Signal(str, str, bool)  # parent label, spec field, vary flag
+    componentLinked = Signal(str, str, str)
+    """Parent label, link kind (``center`` / ``area`` / ``width``, or ``""`` for all) and
+    target label (``""`` removes the link)."""
 
     EDITABLE_COLUMNS = (0, 1, 7, 8)  # name, centre, FWHM G, FWHM L (major lines only)
 
@@ -690,7 +697,49 @@ class ComponentsTable(CopyableTable):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self._loading = False
+        self._labels: list[str] = []
+        self._links: dict[str, dict[str, str]] = {}
         self.itemChanged.connect(self._changed)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._context_menu)
+
+    def link_menu(self, parent_label: str) -> QMenu:
+        """Context menu of one component: tie its centre, area or widths to another
+        component at the current offset / ratio, or remove its links."""
+        menu = QMenu(self)
+        others = [lab for lab in self._labels if lab != parent_label]
+        titles = {"center": "Link centre to", "area": "Link area to", "width": "Link widths to"}
+        for kind in LINK_KINDS:
+            sub = menu.addMenu(titles[kind])
+            sub.setEnabled(bool(others))
+            for other in others:
+                act = sub.addAction(other)
+                act.triggered.connect(
+                    lambda _=False, k=kind, t=other: self.componentLinked.emit(parent_label, k, t)
+                )
+        links = self._links.get(parent_label, {})
+        menu.addSeparator()
+        for kind in LINK_KINDS:
+            if kind in links:
+                act = menu.addAction(f"Remove {kind} link ({links[kind]})")
+                act.triggered.connect(
+                    lambda _=False, k=kind: self.componentLinked.emit(parent_label, k, "")
+                )
+        remove_all = menu.addAction("Remove all links")
+        remove_all.setEnabled(bool(links))
+        remove_all.triggered.connect(lambda: self.componentLinked.emit(parent_label, "", ""))
+        return menu
+
+    def _context_menu(self, pos: Any) -> None:
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        parent = str(item.data(Qt.ItemDataRole.UserRole))
+        if parent not in self._labels:
+            return
+        menu = self.link_menu(parent)
+        menu.exec(self.viewport().mapToGlobal(pos))
+        menu.deleteLater()
 
     def show_result(
         self, result: FitResult | None, element: str | None = None, line: str | None = None
@@ -699,8 +748,13 @@ class ComponentsTable(CopyableTable):
         column lists the reference chemical states whose range holds each centre."""
         self._loading = True
         self.setRowCount(0)
+        self._labels = [m.label for m in result.majors()] if result is not None else []
+        self._links = {}
         if result is not None:
             specs = {s.label: s for s in result.specs}
+            for s in result.specs:
+                if s.links():
+                    self._links[s.label] = {k: v.describe(k) for k, v in s.links().items()}
             for comp in result.components:
                 r = self.rowCount()
                 self.insertRow(r)
@@ -726,10 +780,19 @@ class ComponentsTable(CopyableTable):
                     values[ASSIGNMENT_COLUMN] = f"{best['species']} ({best['energy']:.1f})" + (
                         f" +{len(matches) - 1}" if len(matches) > 1 else ""
                     )
+                links = {} if comp.is_minor else self._links.get(comp.parent, {})
+                linked_cols = {
+                    col: f"= {links[kind]}"
+                    for kind, cols in LINKED_COLUMNS.items()
+                    if kind in links
+                    for col in cols
+                }
                 for c, text in enumerate(values):
                     item = QTableWidgetItem(text)
                     item.setData(Qt.ItemDataRole.UserRole, comp.parent)
-                    editable = (not comp.is_minor) and c in self.EDITABLE_COLUMNS
+                    editable = (
+                        (not comp.is_minor) and c in self.EDITABLE_COLUMNS and c not in linked_cols
+                    )
                     if c in LOCK_COLUMNS:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                         if comp.is_minor or spec is None:
@@ -764,6 +827,11 @@ class ComponentsTable(CopyableTable):
                         item.setTextAlignment(
                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                         )
+                    if c in linked_cols:
+                        font = item.font()
+                        font.setItalic(True)
+                        item.setFont(font)
+                        item.setToolTip(f"Linked: {linked_cols[c]} (right-click to change)")
                     self.setItem(r, c, item)
         self._loading = False
 

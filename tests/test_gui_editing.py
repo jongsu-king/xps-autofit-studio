@@ -390,3 +390,66 @@ def test_report_and_tougaard_selector_in_the_app(window, app, data_dir, tmp_path
     raw = path.read_bytes()
     assert raw.count(b"/Type /Page") - raw.count(b"/Type /Pages") == 3
     assert "report:" in window.log_panel.toPlainText()
+
+
+def test_links_from_the_components_table(window, app, data_dir, tmp_path):
+    from xps_autofit.core.fitting import ComponentLink
+
+    key = _fitted(window, app, data_dir)
+    state = window.session.state(key)
+    first, second = (m.label for m in state.result.majors()[:2])
+    table = window.components
+    menu = table.link_menu(second)
+    titles = [a.text() for a in menu.actions()]
+    assert titles[:3] == ["Link centre to", "Link area to", "Link widths to"]
+    assert [a.text() for a in menu.actions()[0].menu().actions()] == [first]
+    assert not next(a for a in menu.actions() if a.text() == "Remove all links").isEnabled()
+    menu.deleteLater()
+    # tie the second component's widths and area to the first at the current ratio
+    assert window.link_component(second, "width", first)
+    app.processEvents()
+    now = {m.label: m for m in window.session.state(key).result.majors()}
+    ratio = now[second].area / now[first].area  # the area link starts from this ratio
+    assert window.link_component(second, "area", first)
+    app.processEvents()
+    state = window.session.state(key)
+    spec = next(s for s in state.result.specs if s.label == second)
+    assert spec.width_link == ComponentLink(first)
+    assert spec.area_link.target == first and spec.area_link.value == pytest.approx(ratio, rel=1e-3)
+    got = {m.label: m for m in state.result.majors()}
+    assert got[second].fwhm_g == pytest.approx(got[first].fwhm_g)
+    assert got[second].area / got[first].area == pytest.approx(spec.area_link.value)
+    assert state.status == "manual"
+    row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == second)
+    area_cell = table.item(row, 4)
+    assert area_cell.font().italic() and first in area_cell.toolTip()
+    assert not area_cell.flags() & Qt.ItemFlag.ItemIsEditable
+    assert not table.item(row, 7).flags() & Qt.ItemFlag.ItemIsEditable  # FWHM G follows
+    assert "area linked to" in window.log_panel.toPlainText()
+    # a link back the other way would be circular: refused, nothing refitted
+    assert not window.link_component(first, "area", second)
+    assert "circular area link" in window.log_panel.toPlainText()
+    # renaming the target keeps the link; removing one link, then all
+    window.rename_component(first, "main line")
+    app.processEvents()
+    spec = next(s for s in window.session.state(key).result.specs if s.label == second)
+    assert spec.area_link.target == "main line" and spec.width_link.target == "main line"
+    menu = table.link_menu(second)
+    assert any(a.text().startswith("Remove area link") for a in menu.actions())
+    menu.deleteLater()
+    # a recipe saved with the fitted components keeps the links
+    recipe = window.save_recipe_file(tmp_path / "linked.yaml", include_components=True)
+    assert recipe is not None
+    saved = {c.label: c for c in load_recipe(tmp_path / "linked.yaml").region("S 2p").candidates}
+    assert saved[second].links["area"].target == "main line"
+    assert saved[second].links["width"] == ComponentLink("main line")
+    assert saved["main line"].links == {}
+    assert window.link_component(second, "area", "")
+    app.processEvents()
+    spec = next(s for s in window.session.state(key).result.specs if s.label == second)
+    assert spec.area_link is None and spec.width_link is not None
+    assert window.link_component(second, "", "")
+    app.processEvents()
+    spec = next(s for s in window.session.state(key).result.specs if s.label == second)
+    assert spec.links() == {}
+    assert not window.link_component(second, "", "")  # nothing left to remove

@@ -67,15 +67,16 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Input** | CSV / TXT / TSV / DAT / XY exports (sniffed delimiter, header-based column choice, decimal commas, descending axes, kinetic-energy columns), Excel workbooks `.xlsx` / `.xlsm` (one sheet per region, one column per sample, side-by-side pairs, vendor exports with background / envelope / peak columns) and ISO 14976 VAMAS `.vms` |
 | **Backgrounds** | Linear, Shirley, Tougaard (universal or three-parameter polymer cross-section); *static* (endpoints, optional free linear refinement) or *active* (generated from the fitted envelope with free offset and a scattering factor bounded around the endpoint estimate); `auto` tries them all |
 | **Line shapes** | Gaussian, Lorentzian, Voigt, pseudo-Voigt (sum, SGL), GL product (CasaXPS `GL(p)`), asymmetric Doniach-Šunjić (metals), area-normalised; `auto` chooses |
-| **Constraints** | Spin-orbit doublets as one component (splitting, area ratio, shared widths), width bounds, shared widths, candidate windows for chemical states, minimum separation |
+| **Constraints** | Spin-orbit doublets as one component (splitting, area ratio, shared widths), width bounds, shared widths, candidate windows for chemical states, minimum separation, links between components (centre offset, area ratio, same widths; fixed or within a tolerance, CasaXPS-style) |
 | **Model selection** | AICc / BIC among models that pass the physical checks, parsimony margin, residual diagnostics (Durbin-Watson, runs test, lag-1), multi-start and optional differential-evolution search |
 | **Robustness** | Robust loss (`soft_l1`, `huber`, `cauchy`, `arctan`), spike mask, parameter-correlation and relative-error warnings |
 | **Quality grade** | A-E per candidate with every deduction listed, in the report, the tables and the app |
 | **Uncertainties** | Covariance errors; Poisson or residual bootstrap of areas, centres, widths, fractions, propagated to atomic percentages |
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction; a rough composition from the survey itself (`identify --quantify`); `suggest` turns the result into a recipe (regions around the measured lines, database doublets, Scofield RSFs, C 1s charge reference) |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu; composition series over many samples (depth profiles, ageing series) as a table, a figure and an Origin file; instrument RSF libraries (CSV / YAML, `--rsf-library`) with the source of every factor recorded |
+| **Valence band** | Valence-band maximum by linear extrapolation of the leading edge onto the baseline, automatic or explicit windows, standard error and window sensitivity, Origin-style figure (`xps-autofit vbm`, *Analysis > Valence-band edge* in the app) |
 | **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), CSV that OriginLab Origin opens as a labelled workbook (`--formats origin`, *Export for Origin* in the app, opened in Origin when it is installed), a PDF report per file (summary, composition, one page per region; `--formats report`), per-run summaries; `verify` reproduces a project |
-| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), fixable centres and widths per component, chemical-state suggestions per component, plot options (title, labels, fonts, ranges), "save settings as recipe", bootstrap, batch, export, PDF report, element identification with recipe suggestion, session files, update notice |
+| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), fixable centres and widths per component, links between components (right-click), chemical-state suggestions per component, plot options (title, labels, fonts, ranges), "save settings as recipe", bootstrap, batch, export, PDF report, element identification with recipe suggestion, session files, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
 ## Install
@@ -154,6 +155,9 @@ xps-autofit batch ./spectra --recipe cu2o --output results --formats csv,xlsx,js
 
 # Re-run a saved project and confirm the numbers reproduce
 xps-autofit verify results/p3ht_aged_S2p__S_2p.json
+
+# Valence-band maximum by linear extrapolation of the leading edge, with a figure
+xps-autofit vbm vb.csv --plot results
 
 # Is there a newer release?
 xps-autofit update-check
@@ -371,6 +375,13 @@ software. Readers for additional formats can be registered with
 - Origin export (label rows, column order, values, component table, comparison
   pairs, batch format, finding Origin under Program Files, opening the file) and
   redraws that release their plot items
+- the valence-band maximum on synthetic valence bands (within 0.04 eV at 0.5 eV
+  resolution, the low reading at 0.9 eV resolution, explicit windows, refused
+  ranges, the flat-baseline fallback, command line, figures, the app)
+- links between components (offset, ratio and widths followed exactly or within a
+  tolerance, error propagation, cycles and unknown targets refused, recipe and
+  project round trips, renames, the component table, the app's context menu) and a
+  degenerate lowest-chi-square start no longer discarding a component count
 - parameter locks (fixed widths and centres survive a refit and a drag), plot
   options (labels, fonts, legend, fills, ranges, persistence, dialog round trip)
   and recipes saved from the settings panel (with the fitted components as
@@ -379,7 +390,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (261 tests, about eight minutes). Comparisons with real instrument
+Run `pytest` to execute them (277 tests, about eight minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 
@@ -393,7 +404,7 @@ if you can share measured spectra for that, please open a discussion.
 | 3 | v0.4.0 | Robust loss and spike mask, parameter correlations, quality grade, survey element identification, update notice |
 | 3 | v0.5.0 | Composition tab, charge alignment, FIT ALL, undo/redo, comparison view with stacked series, bounded active background, GL product line, energy-dependent quantification correction |
 | 3 | v0.6.0 | Session files, recipe suggestion from a survey, Origin-style figures and plot, Origin export, parameter locks, plot options, automatic installation of updates, Intel Mac build (this release) |
-| 3 | v0.7.0 | Survey composition, composition series (depth profiles, sample series), instrument RSF libraries, chemical-state suggestions in the app (on `main`) |
+| 3 | v0.7.0 | Survey composition, composition series (depth profiles, sample series), instrument RSF libraries, chemical-state suggestions in the app, polymer Tougaard cross-section, PDF report, links between components, valence-band maximum (on `main`) |
 | 4 | v1.0.0 | Validation against measured data and other software |
 | 5 | v2.0 | PCA / multivariate analysis, large batches, model recommendation |
 
@@ -414,12 +425,12 @@ to the latest version, and each release has its own DOI (0.6.0:
 
 XPS 스펙트럼(CSV·TXT·VAMAS·엑셀 .xlsx)을 불러와 배경 제거(Linear·Shirley·Tougaard, 고분자용 3-매개변수 Tougaard 단면적과 피크와 함께 피팅하는
 능동 배경 포함), Voigt 계열과 금속용 비대칭 Doniach-Šunjić 피팅, 스핀-궤도
-이중선 제약, AICc/BIC와 물리 검사·잔차 진단(Durbin-Watson)을 함께 쓰는 자동
+이중선 제약과 성분 사이 연결(위치 간격·면적 비·같은 폭, CasaXPS식), AICc/BIC와 물리 검사·잔차 진단(Durbin-Watson)을 함께 쓰는 자동
 모델 선택, 강건 손실과 스파이크 마스크, 파라미터 상관 경고, 피팅마다 매기는
 품질 등급(A–E), 부트스트랩 불확도가 붙은 조성 계산(탈출 깊이·투과 함수 보정
 선택), 서베이 스펙트럼의 원소 식별과 서베이만으로 구한 대략적 조성, 여러 시료(깊이
 프로파일·시료 시리즈)의 조성 표와 그래프, CasaXPS식 GL(p) 곱 선형, 논문용 그림과
-파일별 PDF 보고서, 재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는 도구입니다. 같은
+파일별 PDF 보고서, 가전자대 끝 외삽으로 구하는 가전자대 최대(VBM), 재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는 도구입니다. 같은
 레시피를 여러 시료에 적용해 피크 수를 임의로 늘리지 않고 비교할 수 있습니다.
 `xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱 화면(다크·라이트
 테마, Origin 풍 출판용 그래프 또는 장비 스타일 그래프 선택)으로, 피크

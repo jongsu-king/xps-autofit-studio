@@ -60,6 +60,82 @@ is skipped (with a warning) above this step in eV."""
 
 
 # ----------------------------------------------------------------------------- specs
+LINK_KINDS = ("center", "area", "width")
+"""What a :class:`ComponentLink` ties: the centre (``target + offset``), the area
+(``target * ratio``) or the line-shape parameters (those of the target)."""
+
+
+@dataclass(frozen=True)
+class ComponentLink:
+    """One parameter of a component tied to another component, like the constraints
+    ``A + 1.2`` / ``A * 0.5`` / ``A`` of CasaXPS.
+
+    ``value`` is the centre offset in eV (``kind="center"``) or the area ratio
+    (``kind="area"``); it is unused for ``"width"``.  ``tolerance > 0`` lets the
+    offset or ratio vary within ``value +/- tolerance``; 0 fixes it.
+    """
+
+    target: str
+    value: float = 0.0
+    tolerance: float = 0.0
+
+    def to_list(self, kind: str) -> list[Any] | str:
+        if kind == "width":
+            return self.target
+        out: list[Any] = [self.target, self.value]
+        if self.tolerance:
+            out.append(self.tolerance)
+        return out
+
+    @classmethod
+    def parse(cls, kind: str, raw: Any, owner: str = "") -> ComponentLink:
+        """From a recipe or project value: ``"label"`` (width), ``[label, value]``,
+        ``[label, value, tolerance]`` or ``{target, value, tolerance}``."""
+        where = f"{owner}: " if owner else ""
+        if kind not in LINK_KINDS:
+            raise FitError(f"{where}unknown link {kind!r}; use one of {', '.join(LINK_KINDS)}")
+        if isinstance(raw, str):
+            if kind != "width":
+                raise FitError(f"{where}a {kind} link needs [component, value]")
+            target, value, tol = raw, 0.0, 0.0
+        elif isinstance(raw, dict):
+            target = raw.get("target", "")
+            value = raw.get("value", 1.0 if kind == "area" else 0.0)
+            tol = raw.get("tolerance", 0.0)
+        elif isinstance(raw, (list, tuple)) and 1 <= len(raw) <= 3:
+            if kind != "width" and len(raw) < 2:
+                raise FitError(f"{where}a {kind} link needs [component, value]")
+            target = raw[0]
+            value = raw[1] if len(raw) > 1 else 0.0
+            tol = raw[2] if len(raw) > 2 else 0.0
+        else:
+            raise FitError(f"{where}cannot read the {kind} link {raw!r}")
+        try:
+            value, tol = float(value), float(tol)
+        except (TypeError, ValueError):
+            raise FitError(f"{where}the {kind} link {raw!r} needs numbers") from None
+        target = str(target).strip()
+        if not target:
+            raise FitError(f"{where}the {kind} link names no component")
+        if target == owner:
+            raise FitError(f"{where}a component cannot be linked to itself")
+        if tol < 0 or not (math.isfinite(value) and math.isfinite(tol)):
+            raise FitError(f"{where}the {kind} link needs a finite value and tolerance >= 0")
+        if kind == "area" and value - tol <= 0:
+            raise FitError(f"{where}an area ratio must stay above 0 (got {value} +/- {tol})")
+        if kind == "width":
+            value, tol = 0.0, 0.0
+        return cls(target, value, tol)
+
+    def describe(self, kind: str) -> str:
+        tol = f" (+/- {self.tolerance:g})" if self.tolerance else ""
+        if kind == "center":
+            return f"{self.target} {'+' if self.value >= 0 else '-'} {abs(self.value):.3f} eV{tol}"
+        if kind == "area":
+            return f"{self.target} x {self.value:.4g}{tol}"
+        return f"widths of {self.target}"
+
+
 @dataclass
 class ComponentSpec:
     """Initial values and per-component bounds for one chemical component."""
@@ -79,8 +155,34 @@ class ComponentSpec:
     """``False`` fixes every width parameter of this component (FWHM G, FWHM L or the
     GL width) at the spec's value; the spin-orbit partner follows as usual."""
     doublet: DoubletSpec | None = None
+    center_link: ComponentLink | None = None
+    """Centre = centre of ``center_link.target`` + offset (overrides the own window)."""
+    area_link: ComponentLink | None = None
+    """Area = area of ``area_link.target`` x ratio."""
+    width_link: ComponentLink | None = None
+    """Widths, GL mixing and asymmetry = those of ``width_link.target``."""
+
+    def links(self) -> dict[str, ComponentLink]:
+        """The links that are set, by kind."""
+        out = {k: getattr(self, f"{k}_link") for k in LINK_KINDS}
+        return {k: v for k, v in out.items() if v is not None}
+
+    def set_links(self, links: dict[str, ComponentLink | None]) -> ComponentSpec:
+        """Set (or, with ``None``, clear) links by kind; returns ``self``."""
+        for kind, link in links.items():
+            if kind not in LINK_KINDS:
+                raise FitError(f"unknown link {kind!r}; use one of {', '.join(LINK_KINDS)}")
+            setattr(self, f"{kind}_link", link)
+        return self
 
     def to_dict(self) -> dict[str, Any]:
+        d = self._base_dict()
+        links = self.links()
+        if links:
+            d["links"] = {k: v.to_list(k) for k, v in links.items()}
+        return d
+
+    def _base_dict(self) -> dict[str, Any]:
         return {
             "label": self.label,
             "center": self.center,
@@ -101,7 +203,7 @@ class ComponentSpec:
     def from_dict(cls, d: dict[str, Any]) -> ComponentSpec:
         cb = d.get("center_bounds")
         fb = d.get("fwhm_g_bounds")
-        return cls(
+        spec = cls(
             label=str(d["label"]),
             center=float(d["center"]),
             area=float(d.get("area", 1.0)),
@@ -116,6 +218,89 @@ class ComponentSpec:
             vary_width=bool(d.get("vary_width", True)),
             doublet=DoubletSpec.from_dict(d.get("doublet")),
         )
+        return spec.set_links(dict(parse_links(d.get("links"), spec.label)))
+
+
+def parse_links(raw: Any, owner: str = "") -> dict[str, ComponentLink]:
+    """``{"center": [...], "area": [...], "width": "label"}`` (a recipe or project
+    value) -> links by kind."""
+    if not raw:
+        return {}
+    if not isinstance(raw, dict):
+        raise FitError(f"{owner}: links must be a mapping of center / area / width")
+    return {str(k): ComponentLink.parse(str(k), v, owner) for k, v in raw.items()}
+
+
+def link_problems(specs: list[ComponentSpec]) -> list[str]:
+    """Links that name no component of ``specs`` (they are ignored by the fit)."""
+    labels = {s.label for s in specs}
+    return [
+        f"{s.label}: {kind} link to {link.target!r} ignored (no such component)"
+        for s in specs
+        for kind, link in s.links().items()
+        if link.target not in labels
+    ]
+
+
+def _link_order(specs: list[ComponentSpec], kind: str) -> list[tuple[int, int, ComponentLink]]:
+    """``(component, target, link)`` index pairs for one kind; raises on a cycle."""
+    index: dict[str, int] = {}
+    for i, s in enumerate(specs):
+        index.setdefault(s.label, i)
+    edges: dict[int, tuple[int, ComponentLink]] = {}
+    for i, s in enumerate(specs):
+        link = getattr(s, f"{kind}_link")
+        if link is not None and link.target in index and index[link.target] != i:
+            edges[i] = (index[link.target], link)
+    for start in edges:
+        seen = [start]
+        node = edges[start][0]
+        while node in edges:
+            if node in seen:
+                chain = " -> ".join(specs[k].label for k in seen + [node])
+                raise FitError(f"circular {kind} link: {chain}")
+            seen.append(node)
+            node = edges[node][0]
+    return [(i, j, link) for i, (j, link) in edges.items()]
+
+
+def check_link_cycles(specs: list[ComponentSpec]) -> None:
+    """Raise :class:`FitError` when links of one kind form a cycle (A -> B -> A)."""
+    for kind in LINK_KINDS:
+        _link_order(specs, kind)
+
+
+def _root_param(params: lmfit.Parameters, name: str) -> str:
+    """Follow ``a = b`` expressions to the parameter that holds the value."""
+    seen = {name}
+    while params[name].expr and params[name].expr.strip() in params:
+        name = params[name].expr.strip()
+        if name in seen:
+            break
+        seen.add(name)
+    return name
+
+
+def _apply_links(
+    params: lmfit.Parameters, specs: list[ComponentSpec], names: tuple[str, ...]
+) -> None:
+    """Turn the links of ``specs`` into lmfit expressions (after every component's
+    own parameters exist).  A linked centre or width loses its own bounds: it follows
+    the target."""
+    for i, j, link in _link_order(specs, "center"):
+        off = f"c{i}_link_center"
+        _add_fixed_or_bounded(params, off, link.value, link.tolerance)
+        params[f"c{i}_center"].set(expr=f"c{j}_center + {off}", min=-np.inf, max=np.inf)
+    for i, j, link in _link_order(specs, "area"):
+        ratio = f"c{i}_link_area"
+        _add_fixed_or_bounded(params, ratio, link.value, link.tolerance)
+        params[f"c{i}_area"].set(expr=f"c{j}_area * {ratio}")
+    for i, j, _link in _link_order(specs, "width"):
+        for w in names:
+            own, root = f"c{i}_{w}", _root_param(params, f"c{j}_{w}")
+            if root == own:
+                continue  # already the same parameter (a shared width)
+            params[own].set(expr=root, min=-np.inf, max=np.inf)
 
 
 @dataclass
@@ -463,6 +648,7 @@ def build_parameters(
                         min=bmin,
                         max=bmax,
                     )
+    _apply_links(params, specs, tuple(names))
     active = settings.background.is_active
     if active:
         if y is None:
@@ -692,6 +878,7 @@ def fit_peaks(
         else:
             mask = None
 
+    extra_warnings.extend(link_problems(specs))
     params = build_parameters(specs, settings, x, y, background)
     ctx = ModelContext.create(x, specs, settings)
     target = y if active else y_net
@@ -1120,5 +1307,10 @@ def rename_component(result: FitResult, old: str, new: str) -> FitResult:
         else c
         for c in result.components
     ]
-    specs = [replace(s, label=new) if s.label == old else s for s in result.specs]
+    specs = [
+        replace(s, label=new if s.label == old else s.label).set_links(
+            {k: replace(link, target=new) for k, link in s.links().items() if link.target == old}
+        )
+        for s in result.specs
+    ]
     return replace(result, components=components, specs=specs)

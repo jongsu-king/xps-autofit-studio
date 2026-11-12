@@ -261,8 +261,14 @@ def check_physical(
                 )
 
     centers = sorted((c.center, c.label) for c in majors)
+    # a centre tied to another one at a chosen offset is not an independent line
+    tied = {
+        frozenset((s.label, s.center_link.target))
+        for s in result.specs
+        if s.center_link is not None
+    }
     for (e1, l1), (e2, l2) in zip(centers[:-1], centers[1:]):
-        if e2 - e1 < constraints.min_separation:
+        if e2 - e1 < constraints.min_separation and frozenset((l1, l2)) not in tied:
             violations.append(
                 Violation(
                     "too_close",

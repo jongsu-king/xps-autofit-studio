@@ -56,6 +56,35 @@ All notable changes to this project are documented here. The format follows
   `<file>_report.pdf`; the app has *File > Export report (PDF)…* (Ctrl+Alt+R).
 - `export.plots.draw_fit` draws a fit into given axes, so the report and the figure
   exports share one drawing.
+- **Links between components** (CasaXPS-style `A + 1.2`, `A * 0.5`, `A`): a
+  component's centre can follow another's at an offset, its area at a ratio and its
+  line shape (widths, mixing, asymmetry) exactly, each offset or ratio fixed or free
+  within a tolerance. Recipes take `links: {center: [target, offset, tol], area:
+  [target, ratio, tol], width: target}` on a candidate (checked for unknown targets
+  and cycles when the recipe loads); the app's Components table has *Link centre /
+  area / widths to* and *Remove links* on right-click, shows linked cells in italics
+  with the link in the tooltip, and refuses cycles. Links are kept in project,
+  session and recipe files, follow a renamed target, go with a removed one, appear in
+  the `links` column of the component table and in the report notes. Two centres
+  tied by a link are exempt from `min_separation`.
+- **Valence-band maximum** (`automation/valence_band.py`): linear extrapolation of the
+  leading edge onto the baseline below it, with automatic windows (edge between 0.2
+  and 0.6 of the rise to the first band maximum, baseline up to the foot) or explicit
+  energy ranges, Poisson-weighted line fits, the VBM's standard error and its spread
+  over shifted edge windows. `xps-autofit vbm` (text, `--json`, `--plot` for an
+  Origin-style figure), *Analysis > Valence-band edge (VBM)* (Ctrl+Shift+V) in the
+  app (both lines and the VBM on the plot), `export.plots.plot_vb_edge`, and
+  `synthesize_valence_band` for tests. On synthetic valence bands at 0.3-0.5 eV
+  resolution the VBM comes back within 0.03 eV; at 0.9 eV it reads 0.03-0.08 eV low
+  (`algorithm.md`, section 13).
+
+### Fixed
+- Model selection no longer drops a component count because its lowest chi-square
+  start fails a physical check while another start of the same model passes: the
+  best start that passes with error bars is kept (and named in the notes). The
+  example P3HT C 1s (seed 6, behind the report of `example_dataset(seed=4)`) went
+  from three components, reduced chi-square 5.9 and grade E to the four true
+  components, 1.08 and grade B; over 12 seeds the right count went from 10 to 12.
 
 ### Changed
 - VAMAS spectrum names no longer repeat the region when the block identifier already

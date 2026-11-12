@@ -223,7 +223,14 @@ def write_report(
                 component_rows(r),
                 font,
             )
+            links = [
+                f"{s.label}: " + "; ".join(f"{k} = {v.describe(k)}" for k, v in s.links().items())
+                for s in r.result.specs
+                if s.links()
+            ]
             notes = [n for n in r.notes if n][:6]
+            if links:
+                notes.insert(0, "Links - " + " | ".join(links))
             if notes:
                 wrapped = [textwrap.fill(n, 140) for n in notes]
                 tab.text(
