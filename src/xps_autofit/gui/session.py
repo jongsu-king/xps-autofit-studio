@@ -16,8 +16,8 @@ from ..core.quantification import QuantCorrection, QuantResult, atomic_percent
 from ..core.quantification import atomic_percent_samples as _propagate_samples
 from ..core.spectrum import AL_KALPHA_EV, Spectrum
 from ..core.uncertainty import BootstrapResult
+from ..database.rsf_library import RsfLibrary, RsfLibraryError, load_rsf_library, resolve_rsf
 from ..database.sensitivity_factors import SOURCE as SCOFIELD_SOURCE
-from ..database.sensitivity_factors import get_rsf
 from ..readers import read_spectra
 from ..recipes import Recipe
 
@@ -126,6 +126,8 @@ class Session(QObject):
         self.order: list[str] = []
         self.results: dict[str, RegionState] = {}
         self.recipe: Recipe | None = None
+        self.rsf_library: RsfLibrary | None = None
+        """Instrument sensitivity factors loaded in the app (replace the recipe's)."""
 
     def load_paths(self, paths: Sequence[str | Path], **reader_kwargs: Any) -> list[str]:
         """Read files; returns the keys added.  Unreadable files are reported, not fatal."""
@@ -263,10 +265,9 @@ class Session(QObject):
                 label = f"{label} [{self.items[k].display_name}]"
             total = region.rsf_applies_to == "total"
             area = result.total_area if total else sum(c.area for c in result.majors())
-            rsf, source = region.rsf, "recipe"
-            if rsf is None:
-                rsf = get_rsf(region.element, region.line)
-                source = "Scofield" if rsf is not None else "missing"
+            rsf, source = resolve_rsf(
+                region.element, region.line, region.rsf, self._library(), scofield=True
+            )
             rows.append((label, region.element, region.line, area, rsf))
             sources[label] = source
             main = max(result.majors(), key=lambda c: c.area)
@@ -288,7 +289,22 @@ class Session(QObject):
             _propagate_samples(quant, samples)
         if any(s == "Scofield" for s in sources.values()):
             quant.note += f"; Scofield factors: {SCOFIELD_SOURCE}"
+        library = self._library()
+        if library is not None and any(s.startswith("library") for s in sources.values()):
+            quant.note += f"; {library.describe()}"
         return quant
+
+    def _library(self) -> RsfLibrary | None:
+        """The library loaded in the app, else the one the recipe names (if readable)."""
+        if self.rsf_library is not None:
+            return self.rsf_library
+        path = self.recipe.rsf_library if self.recipe is not None else None
+        if not path:
+            return None
+        try:
+            return load_rsf_library(path)
+        except RsfLibraryError:
+            return None
 
     # ------------------------------------------------------------------ renaming
     def rename_spectrum(self, key: str, name: str) -> bool:

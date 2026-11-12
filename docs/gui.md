@@ -31,8 +31,11 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
    background), each component with a draggable centre line, the envelope and the
    residual with the ±1σ band. A hairline cursor follows the mouse in both panels
    and the status bar reads out energy and intensity. The Components tab lists
-   centres, FWHM, areas with standard errors, the fraction per chemical component
-   and the asymmetry; the Models tab lists every candidate with its variant
+   centres, FWHM, areas with standard errors, the fraction per chemical component,
+   the asymmetry and an **Assignment** suggestion - the reference chemical state of
+   the built-in database whose typical range holds the centre (+/- 0.5 eV), with all
+   matches and their distances in the tooltip (a suggestion from typical values, not
+   an assignment); the Models tab lists every candidate with its variant
    (background / shape), criterion, reduced chi-square, Durbin-Watson statistic and
    the physical checks it failed (click a row to view that model); the
    Diagnostics tab is a monospace readout of the statistics, residual diagnostics,
@@ -113,7 +116,9 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
 The **Composition** tab turns the fitted regions of the current file into atomic
 percentages, with the arithmetic of the batch summary: the area of each region
 (doublet total or major line, as the recipe's `rsf_applies_to` says) divided by
-its RSF - the recipe's value or, failing that, the Scofield cross-section from the
+its RSF - an instrument library's value when one is loaded (*Analysis > RSF
+library…*, CSV `element,line,rsf` or YAML; remembered; *Use the recipe's RSFs*
+clears it), else the recipe's value or, failing that, the Scofield cross-section from the
 built-in table, with the source shown - and by `KE^(a + b)` when the recipe asks
 for the escape-depth / transmission correction (`algorithm.md`, section 12). The
 kinetic energy of each line, the atomic percentages and, when every region has a

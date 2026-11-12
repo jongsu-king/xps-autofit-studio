@@ -42,7 +42,7 @@ from ..core.quantification import QuantResult
 from ..core.region import RegionSpec
 from ..core.spectrum import Spectrum
 from ..core.uncertainty import BootstrapResult
-from ..database.binding_energies import spin_orbit
+from ..database.binding_energies import spin_orbit, suggest_assignments
 from ..recipes import Recipe
 from .session import LoadedSpectrum
 from .theme import STATUS_COLORS, STATUS_TEXT
@@ -638,7 +638,10 @@ COMPONENT_HEADERS = [
     "Asym",
     "Fix C",
     "Fix W",
+    "Assignment",
 ]
+ASSIGNMENT_COLUMN = 12
+"""Reference chemical state nearest to the centre (database, +/- 0.5 eV tolerance)."""
 LOCK_COLUMNS = {10: "vary_center", 11: "vary_width"}
 """Check-box columns: a tick fixes the centre / the widths of that component."""
 
@@ -661,7 +664,11 @@ class ComponentsTable(CopyableTable):
         self._loading = False
         self.itemChanged.connect(self._changed)
 
-    def show_result(self, result: FitResult | None) -> None:
+    def show_result(
+        self, result: FitResult | None, element: str | None = None, line: str | None = None
+    ) -> None:
+        """Fill the table; with the region's ``element`` and ``line`` the Assignment
+        column lists the reference chemical states whose range holds each centre."""
         self._loading = True
         self.setRowCount(0)
         if result is not None:
@@ -683,7 +690,14 @@ class ComponentsTable(CopyableTable):
                     f"{comp.asym:.3f}" if comp.asym is not None else "",
                     "",
                     "",
+                    "",
                 ]
+                matches = [] if comp.is_minor else suggest_assignments(element, line, comp.center)
+                if matches:
+                    best = matches[0]
+                    values[ASSIGNMENT_COLUMN] = f"{best['species']} ({best['energy']:.1f})" + (
+                        f" +{len(matches) - 1}" if len(matches) > 1 else ""
+                    )
                 for c, text in enumerate(values):
                     item = QTableWidgetItem(text)
                     item.setData(Qt.ItemDataRole.UserRole, comp.parent)
@@ -707,7 +721,18 @@ class ComponentsTable(CopyableTable):
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     elif c == 0:
                         item.setToolTip("Double-click to rename the component")
-                    if c > 0:
+                    if c == ASSIGNMENT_COLUMN and matches:
+                        item.setToolTip(
+                            "Reference states whose range holds the centre (+/- 0.5 eV):\n"
+                            + "\n".join(
+                                f"{m['species']}: {m['energy']:.2f} eV "
+                                f"({m['low']:.1f}-{m['high']:.1f}), "
+                                f"{m['distance_eV']:.2f} eV away"
+                                for m in matches
+                            )
+                            + "\nA suggestion from typical values, not an assignment."
+                        )
+                    if 0 < c < ASSIGNMENT_COLUMN:
                         item.setTextAlignment(
                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                         )

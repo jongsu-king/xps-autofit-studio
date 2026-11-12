@@ -25,6 +25,15 @@ class SynthComponent:
     fwhm_g: float = 1.0
     fwhm_l: float = 0.2
     doublet: DoubletSpec | None = None
+    shape: str = "voigt"
+    """``"voigt"`` or ``"doniach_sunjic"`` (asymmetric metallic line, uses ``asym``)."""
+    asym: float = 0.0
+
+    def widths(self) -> dict[str, float]:
+        w = {"fwhm_g": self.fwhm_g, "fwhm_l": self.fwhm_l}
+        if self.shape == "doniach_sunjic":
+            w["asym"] = self.asym
+        return w
 
     def to_dict(self) -> dict[str, Any]:
         d = {k: v for k, v in self.__dict__.items() if k != "doublet"}
@@ -63,15 +72,14 @@ def synthesize(
     x = np.arange(region.lo, region.hi + region.step / 2, region.step)
     signal = np.zeros_like(x)
     for c in region.components:
-        signal += evaluate("voigt", x, c.area, c.center, fwhm_g=c.fwhm_g, fwhm_l=c.fwhm_l)
+        signal += evaluate(c.shape, x, c.area, c.center, **c.widths())
         if c.doublet is not None:
             signal += evaluate(
-                "voigt",
+                c.shape,
                 x,
                 c.area * c.doublet.area_ratio,
                 c.center + c.doublet.splitting,
-                fwhm_g=c.fwhm_g,
-                fwhm_l=c.fwhm_l,
+                **c.widths(),
             )
     if region.background == "shirley":
         bg = shirley_like_background(x, signal, region.background_lo, region.background_hi)
@@ -146,6 +154,15 @@ def cu2p3_mixed() -> SynthRegion:
     return SynthRegion(
         "Cu 2p3/2", 926.0, 950.0, 0.1, comps, 2000.0, 3500.0, element="Cu", line="2p3/2"
     )
+
+
+def au4f_metal(asym: float = 0.10) -> SynthRegion:
+    """Metallic Au 4f: one spin-orbit doublet with a Doniach-Sunjic tail (``asym=0``
+    gives the symmetric Voigt doublet of the same widths)."""
+    doublet = DoubletSpec(splitting=3.67, area_ratio=0.75)
+    shape = "doniach_sunjic" if asym > 0 else "voigt"
+    comps = [SynthComponent("Au(0)", 84.0, 60000.0, 0.55, 0.30, doublet, shape, asym)]
+    return SynthRegion("Au 4f", 80.0, 92.0, 0.05, comps, 400.0, 700.0, element="Au", line="4f")
 
 
 def synthesize_survey(

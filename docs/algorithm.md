@@ -136,6 +136,18 @@ lies slightly above it. `asym` is bounded by `constraints.asym` (default
 the symmetric case and raises no warning. The asymmetric shape is not part of
 `shape: auto`; set it explicitly for metallic regions.
 
+Why not automatically: for any `alpha > 0` the Doniach-Sunjic tail falls off only
+as `alpha / |E - E0|` towards high binding energy, so over a 10-eV window even
+`alpha = 0.001` adds a slowly rising, background-like contribution. Tried as an
+extra candidate of `shape: auto` (2026-11-12, synthetic Au 4f doublets), it won on
+*symmetric* data in three of six seeds with `alpha = 0.001`, lowering chi-square by
+about 10 (277 to 267) through the static Shirley background's small mismatch while
+moving the area away from the truth (60 065 to 59 354 of 60 000); on metallic data
+(`alpha = 0.10`) the selection still took two or three components. The tail and the
+background trade against each other, so a statistical criterion alone cannot decide
+the line shape here: choose `doniach_sunjic` from the physics (a metal) and check the
+background.
+
 ## 5. Physical checks
 
 | Code | Condition | Severity |
@@ -354,6 +366,17 @@ replicates exist, and the samples without a composition kept as empty rows.
 Origin file with `--formats origin`) whenever two or more files have a composition.
 
 ## 12. Quantification
+
+**Sensitivity factors** come, in this order, from an instrument RSF library when
+one is in use and has the region's line (`--rsf-library`, the recipe's
+`rsf_library`, or *Analysis > RSF library…* in the app), then from the region's
+`rsf` in the recipe, then - in the app only - from the built-in Scofield table.
+The source of every factor is written next to its atomic percentage
+(`rsf_source`: `library <name>`, `recipe`, `Scofield`). Instrument libraries
+(Avantage, CasaXPS, Kratos) already include the transmission and escape-depth
+dependence of that instrument, so the energy-dependent correction below stays off
+with them. Library lines are matched exactly: `Cu 2p3/2` (a component line) and
+`Cu 2p` (a doublet total) are different factors.
 
 The relative composition of a sample uses one area per region - the doublet total
 or the major line, as the recipe's `rsf_applies_to` says - and

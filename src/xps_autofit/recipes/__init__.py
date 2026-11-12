@@ -39,6 +39,10 @@ class Recipe:
     references: list[str] = field(default_factory=list)
     quantification: QuantCorrection = field(default_factory=QuantCorrection)
     """Energy-dependent correction applied on top of the RSFs (none by default)."""
+    rsf_library: str | None = None
+    """Path of an instrument RSF library (CSV / YAML) whose factors replace the
+    regions' ``rsf`` where it has an entry; relative paths are resolved next to the
+    recipe file."""
 
     def region(self, name: str) -> RegionSpec | None:
         for r in self.regions:
@@ -56,6 +60,7 @@ class Recipe:
             "source": self.source,
             "references": list(self.references),
             "quantification": self.quantification.to_dict(),
+            "rsf_library": self.rsf_library,
         }
 
 
@@ -82,7 +87,18 @@ def recipe_from_dict(d: dict[str, Any], source: str = "") -> Recipe:
         source=source,
         references=[str(r) for r in d.get("references", [])],
         quantification=QuantCorrection.from_dict(d.get("quantification")),
+        rsf_library=_library_path(d.get("rsf_library"), source),
     )
+
+
+def _library_path(value: Any, source: str) -> str | None:
+    """An RSF library path from a recipe, resolved next to a recipe file."""
+    if not value:
+        return None
+    p = Path(str(value)).expanduser()
+    if not p.is_absolute() and source and not source.startswith("builtin:"):
+        p = Path(source).parent / p
+    return str(p)
 
 
 def builtin_recipe_names() -> list[str]:

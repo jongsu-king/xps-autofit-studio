@@ -27,6 +27,7 @@ from ..core.region import RegionSpec
 from ..core.spectrum import AL_KALPHA_EV, Spectrum
 from ..core.uncertainty import bootstrap
 from ..database.binding_energies import suggest_assignments
+from ..database.rsf_library import RsfLibrary, load_rsf_library, resolve_rsf
 from ..export.origin import write_origin_csv
 from ..export.plots import plot_candidates, plot_fit, plot_series
 from ..export.project import project_dict, save_project
@@ -53,6 +54,9 @@ class RunOptions:
     figure_style: str = "origin"
     """``"origin"`` (publication look) or ``"classic"`` for the PNG/SVG/PDF figures."""
     reader_kwargs: dict[str, Any] = field(default_factory=dict)
+    rsf_library: RsfLibrary | None = None
+    """Instrument RSF library; its factors replace the recipe's where it has the line
+    (overrides the recipe's own ``rsf_library``)."""
 
 
 @dataclass
@@ -243,6 +247,10 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
 
     # ---- regions --------------------------------------------------------------------
     quant_items: list[tuple[str, str | None, str | None, float, float | None]] = []
+    rsf_sources: dict[str, str] = {}
+    library = options.rsf_library
+    if library is None and recipe.rsf_library:
+        library = load_rsf_library(recipe.rsf_library)
     quant_samples: dict[str, np.ndarray] = {}
     photo_lines: dict[str, float] = {}
     auger_regions: list[tuple[Spectrum, RegionSpec]] = []
@@ -279,7 +287,9 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
                 if region.rsf_applies_to == "total"
                 else sum(c.area for c in best.result.majors())
             )
-            quant_items.append((region.name, region.element, region.line, area, region.rsf))
+            rsf, rsf_source = resolve_rsf(region.element, region.line, region.rsf, library)
+            rsf_sources[region.name] = rsf_source
+            quant_items.append((region.name, region.element, region.line, area, rsf))
             extra: dict[str, Any] = {"assignments": rr.assignments, "charge_shift_eV": shift}
             if options.bootstrap > 0:
                 boot = bootstrap(sel.spectrum, best.result, n=options.bootstrap, seed=sel.seed)
@@ -310,6 +320,10 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
         hv = _photon_energy(spectra[0], recipe, options)
         kinetic = {name: hv - be for name, be in photo_lines.items()}
         report.quantification = atomic_percent(quant_items, recipe.quantification, kinetic)
+        for e in report.quantification.entries:
+            e.rsf_source = rsf_sources.get(e.label, "")
+        if library is not None:
+            report.quantification.note += f"; {library.describe()}"
         if quant_samples:
             atomic_percent_samples(report.quantification, quant_samples)
     return report
@@ -455,6 +469,7 @@ def write_summary(batch: BatchReport, options: RunOptions) -> dict[str, str]:
                         "line": e.line,
                         "area": e.area,
                         "rsf": e.rsf,
+                        "rsf_source": e.rsf_source,
                         "atomic_percent": e.atomic_percent,
                         "atomic_percent_std": e.atomic_percent_std,
                         "atomic_percent_p2_5": e.atomic_percent_p2_5,

@@ -314,3 +314,21 @@ def test_constraints_round_trip_with_asymmetry():
     assert c2.asym == (0.0, 0.3) and not c2.share_asym and c2.residual_dw_warning == 1.2
     with pytest.raises(ValueError):
         PeakConstraints(asym=(0.0, 0.9))
+
+
+def test_synthetic_metallic_doublet_has_a_high_binding_energy_tail():
+    import numpy as np
+
+    from xps_autofit.synthetic import au4f_metal, synthesize
+
+    metal, truth = synthesize(au4f_metal(0.12), noise="none")
+    sym, _ = synthesize(au4f_metal(0.0), noise="none")
+    assert truth["components"][0]["shape"] == "doniach_sunjic"
+    x = metal.energy
+    # the asymmetric line puts more intensity on the high-BE side of 4f7/2 (84.0 eV)
+    high = (x > 84.6) & (x < 85.6)
+    low = (x > 82.4) & (x < 83.4)
+    assert (metal.intensity - sym.intensity)[high].mean() > (metal.intensity - sym.intensity)[
+        low
+    ].mean()
+    assert np.all(np.isfinite(metal.intensity))

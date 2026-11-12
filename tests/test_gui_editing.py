@@ -311,3 +311,42 @@ def test_survey_composition_and_series_in_the_app(window, app, data_dir, tmp_pat
     )
     assert opened == [origin]
     assert origin.read_text(encoding="utf-8").splitlines()[0].startswith("Sample index,")
+
+
+def test_assignment_column_and_rsf_library_in_the_app(window, app, data_dir, tmp_path):
+    from xps_autofit.gui.panels import ASSIGNMENT_COLUMN, COMPONENT_HEADERS
+
+    assert COMPONENT_HEADERS[ASSIGNMENT_COLUMN] == "Assignment"
+    key = _fitted(window, app, data_dir)  # P3HT S 2p: thiophene and oxidised sulfur
+    table = window.components
+    texts = [table.item(r, ASSIGNMENT_COLUMN).text() for r in range(table.rowCount())]
+    assert any("thiophene" in t for t in texts)
+    first = next(
+        r for r in range(table.rowCount()) if "thiophene" in table.item(r, ASSIGNMENT_COLUMN).text()
+    )
+    assert "not an assignment" in table.item(first, ASSIGNMENT_COLUMN).toolTip()
+    minor_rows = [r for r in range(table.rowCount()) if table.item(r, 0).text().startswith("    ")]
+    assert minor_rows and all(table.item(r, ASSIGNMENT_COLUMN).text() == "" for r in minor_rows)
+    # an RSF library replaces the recipe factor in the Composition tab
+    saved = window.settings_store.value("quant/rsf_library")
+    try:
+        lib = tmp_path / "inst.csv"
+        lib.write_text("element,line,rsf\nS,2p,2.0\n")
+        before = window.session.composition(key)
+        assert before is not None and before.entries[0].rsf_source == "recipe"
+        assert window.load_rsf_library_file(lib) is not None
+        after = window.session.composition(key)
+        s2p = next(e for e in after.entries if e.element == "S")
+        assert s2p.rsf == 2.0 and s2p.rsf_source == "library inst"
+        assert "RSF library inst" in after.note
+        assert window.settings_store.value("quant/rsf_library") == str(lib)
+        assert window.load_rsf_library_file(tmp_path / "missing.csv") is None
+        assert "RSF library not loaded" in window.log_panel.toPlainText()
+        window.clear_rsf_library()
+        assert window.session.rsf_library is None
+        assert window.session.composition(key).entries[0].rsf_source == "recipe"
+    finally:
+        if saved is None:
+            window.settings_store.remove("quant/rsf_library")
+        else:
+            window.settings_store.setValue("quant/rsf_library", saved)

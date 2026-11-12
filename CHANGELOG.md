@@ -24,6 +24,25 @@ All notable changes to this project are documented here. The format follows
   **Analysis > Composition series…** (Ctrl+Shift+T) shows the table and a plot of
   atomic percent against the sample, with CSV and Origin export.
 - `plot_series` draws the series in the Origin-style (or classic) figure look.
+- **Instrument RSF libraries** (`database/rsf_library.py`): a CSV (`element,line,rsf`,
+  or `label,rsf`; semicolons and decimal commas accepted) or YAML (`name`, `source`,
+  `factors`) of the instrument's sensitivity factors replaces the recipe's (and the
+  Scofield table's) wherever it has the region's line: `--rsf-library` for `fit` /
+  `batch`, a top-level `rsf_library:` in a recipe (relative to the recipe file), and
+  *Analysis > RSF library…* in the app (remembered; *Use the recipe's RSFs* clears it).
+  The source of every factor is recorded (`rsf_source` in `summary_quantification.csv`
+  and the Composition tab; the library is named in the note).
+- **Chemical-state suggestions in the app**: the Components table's new *Assignment*
+  column shows the database's reference state whose typical range holds each centre
+  (+/- 0.5 eV), with every match and its distance in the tooltip.
+- The synthetic generator can make asymmetric (Doniach-Sunjic) lines
+  (`SynthComponent.shape`, `asym`; `au4f_metal()`).
+
+### Not adopted
+- The Doniach-Sunjic line as a candidate of `shape: auto` for metals: its tail
+  (`alpha / |E - E0|`) trades against the background, so on symmetric synthetic Au 4f
+  it won in three of six seeds with `alpha = 0.001` and a worse area; see
+  `algorithm.md`, section 4.
 
 ## [0.6.0] - 2026-11-10
 

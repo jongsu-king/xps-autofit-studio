@@ -22,6 +22,7 @@ from .core.background import BackgroundSpec
 from .core.constraints import DoubletSpec, PeakConstraints
 from .core.preprocessing import check_axis, estimate_noise
 from .core.region import RegionSpec
+from .database.rsf_library import load_rsf_library
 from .readers import read_spectra
 from .recipes import Recipe, builtin_recipe_names, load_recipe
 
@@ -54,6 +55,12 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
         "--photon-energy", type=float, default=None, help="eV; default from file or 1486.6"
     )
     p.add_argument("--dpi", type=int, default=200)
+    p.add_argument(
+        "--rsf-library",
+        default=None,
+        help="CSV/YAML of instrument sensitivity factors (element,line,rsf); they replace "
+        "the recipe's factors where the library has the line",
+    )
     p.add_argument(
         "--figure-style",
         choices=["origin", "classic"],
@@ -284,6 +291,9 @@ def _options(args: argparse.Namespace) -> RunOptions:
     return RunOptions(
         output_dir=Path(args.output),
         figure_style=getattr(args, "figure_style", "origin"),
+        rsf_library=load_rsf_library(args.rsf_library)
+        if getattr(args, "rsf_library", None)
+        else None,
         formats=tuple(f.strip() for f in args.formats.split(",") if f.strip()),
         charge_correct=not args.no_charge_correction,
         seed=args.seed,

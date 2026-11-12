@@ -64,7 +64,7 @@ regions:
     criterion: aicc            # aicc | bic | aic
     min_improvement: 2.0       # parsimony margin
     require_assignment: false  # true: a component outside all windows disqualifies the model
-    rsf: 1.677                 # relative sensitivity factor, or null
+    rsf: 1.677                 # relative sensitivity factor, or null (an rsf_library entry wins)
     rsf_applies_to: total      # total (doublet sum) | major
     weighting: auto            # auto | poisson | none
   - name: Cu LMM
@@ -106,6 +106,21 @@ when available (VAMAS blocks; Excel sheet or table titles such as `C1s Scan` or
 range must be covered).
 
 `xps-autofit recipes --show <name>` prints a built-in recipe in this format.
+
+## Instrument sensitivity factors
+
+A recipe may name the instrument's RSF library at the top level:
+
+```yaml
+rsf_library: libs/nexsa_althermo1.csv   # relative to this recipe file
+```
+
+The library is a CSV with `element,line,rsf` columns (or `label,rsf`, with
+semicolons and decimal commas accepted) or a YAML file with `name`, `source` and
+`factors: {"C 1s": 1.0, "O 1s": 2.881, ...}`. Where the library has a region's
+element and line, its factor replaces the region's `rsf`; the summary's
+`rsf_source` column says which one was used. `xps-autofit fit/batch
+--rsf-library FILE` does the same for a run without editing the recipe.
 
 ## A recipe from a survey
 

@@ -44,6 +44,7 @@ from ..core.preprocessing import C1S_REFERENCE_WARNING
 from ..core.quantification import QuantCorrection
 from ..core.region import CandidateLine
 from ..core.uncertainty import BootstrapResult, bootstrap
+from ..database.rsf_library import RsfLibrary, RsfLibraryError, load_rsf_library
 from ..export.origin import (
     ORIGIN_COMPONENTS_SUFFIX,
     ORIGIN_SUFFIX,
@@ -242,6 +243,9 @@ class MainWindow(QMainWindow):
         warning = pyside_refcount_warning()
         if warning:
             self.log(f"WARNING: {warning}")
+        saved_library = str(self.settings_store.value("quant/rsf_library", "") or "")
+        if saved_library:
+            self.load_rsf_library_file(saved_library, persist=False)
         if auto_update_check is None:
             auto_update_check = not synchronous_jobs
         if auto_update_check and self.update_check_due():
@@ -360,6 +364,14 @@ class MainWindow(QMainWindow):
             "Survey: list the elements whose lines explain the peaks and mark them"
         )
         self.act_identify.triggered.connect(lambda: self.identify_current())
+        self.act_rsf_library = QAction("RSF library…", self)
+        self.act_rsf_library.setToolTip(
+            "Load the instrument's sensitivity factors (CSV element,line,rsf or YAML); "
+            "they replace the recipe's and the Scofield values in the Composition tab"
+        )
+        self.act_rsf_library.triggered.connect(self.rsf_library_dialog)
+        self.act_clear_rsf_library = QAction("Use the recipe's RSFs", self)
+        self.act_clear_rsf_library.triggered.connect(self.clear_rsf_library)
         self.act_series = QAction("Composition series…", self)
         self.act_series.setShortcut("Ctrl+Shift+T")
         self.act_series.setToolTip(
@@ -444,6 +456,8 @@ class MainWindow(QMainWindow):
             self.act_identify,
             self.act_suggest,
             self.act_series,
+            self.act_rsf_library,
+            self.act_clear_rsf_library,
             self.act_align,
             self.act_batch,
         ):
@@ -1688,7 +1702,10 @@ class MainWindow(QMainWindow):
             return
         title = f"{cur[1].display_name} - candidate n={cand.n_components} ({cand.variant})"
         self.plot.show_result(cand.result, title, draggable=False)
-        self.components.show_result(cand.result)
+        region = state.selection.region if state.selection is not None else None
+        self.components.show_result(
+            cand.result, region.element if region else None, region.line if region else None
+        )
         status = "ok" if cand.physical_ok else "needs_review"
         self.diagnostics.display(cand.result, state.selection, status)
 
@@ -1852,7 +1869,10 @@ class MainWindow(QMainWindow):
             return
         sel = state.selection
         self.plot.show_result(result, self._title_for(item, state))
-        self.components.show_result(result)
+        region = sel.region if sel is not None else None
+        self.components.show_result(
+            result, region.element if region else None, region.line if region else None
+        )
         self.models.show_selection(sel)
         self.diagnostics.display(result, sel, state.status, state.bootstrap)
         self._refresh_composition()
@@ -1906,6 +1926,40 @@ class MainWindow(QMainWindow):
             self.lamp.set_state(state.status if state else "ok")
 
         return self.runner.start(job, done, self._error, label="export")
+
+    # ------------------------------------------------------------- RSF library
+    def rsf_library_dialog(self) -> None:
+        default = Path(str(self.settings_store.value("last_dir", str(Path.home()))))
+        path, _ = QFileDialog.getOpenFileName(
+            self, "RSF library", str(default), "RSF library (*.csv *.yaml *.yml)"
+        )
+        if path:
+            self.load_rsf_library_file(path)
+
+    def load_rsf_library_file(self, path: str | Path, persist: bool = True) -> RsfLibrary | None:
+        """Use an instrument RSF library for the Composition tab and the series.
+
+        Its factors replace the recipe's (and the Scofield table's) where it has the
+        region's line; the choice is remembered.  ``None`` (and a log line) when the
+        file cannot be read.
+        """
+        try:
+            library = load_rsf_library(path)
+        except RsfLibraryError as exc:
+            self.log(f"RSF library not loaded: {exc}")
+            return None
+        self.session.rsf_library = library
+        if persist:
+            self.settings_store.setValue("quant/rsf_library", str(Path(path)))
+        self.log(f"{library.describe()} from {Path(path).name}")
+        self._refresh_composition()
+        return library
+
+    def clear_rsf_library(self) -> None:
+        self.session.rsf_library = None
+        self.settings_store.remove("quant/rsf_library")
+        self.log("RSF library cleared: recipe factors, then the Scofield table")
+        self._refresh_composition()
 
     # -------------------------------------------------------- composition series
     def composition_series_frame(self, order: str = "natural") -> pd.DataFrame:
