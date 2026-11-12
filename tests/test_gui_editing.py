@@ -436,6 +436,7 @@ def test_links_from_the_components_table(window, app, data_dir, tmp_path):
     assert spec.area_link.target == "main line" and spec.width_link.target == "main line"
     menu = table.link_menu(second)
     assert any(a.text().startswith("Remove area link") for a in menu.actions())
+    assert any(a.text().startswith("Remove widths link") for a in menu.actions())
     menu.deleteLater()
     # a recipe saved with the fitted components keeps the links
     recipe = window.save_recipe_file(tmp_path / "linked.yaml", include_components=True)
@@ -453,3 +454,36 @@ def test_links_from_the_components_table(window, app, data_dir, tmp_path):
     spec = next(s for s in window.session.state(key).result.specs if s.label == second)
     assert spec.links() == {}
     assert not window.link_component(second, "", "")  # nothing left to remove
+
+
+def test_link_values_typed_in_the_dialog(window, app, data_dir):
+    from xps_autofit.core.fitting import ComponentLink
+    from xps_autofit.gui.dialogs import LinkDialog
+
+    key = _fitted(window, app, data_dir)
+    first, second = (m.label for m in window.session.state(key).result.majors()[:2])
+    assert window.edit_links_dialog(second) is None  # nothing linked yet
+    assert "no centre or area link to edit" in window.log_panel.toPlainText()
+    assert window.link_component(second, "center", first)
+    app.processEvents()
+    menu = window.components.link_menu(second)
+    edit = next(a for a in menu.actions() if a.text() == "Edit link values…")
+    assert edit.isEnabled()
+    menu.deleteLater()
+    dlg = window.edit_links_dialog(second)
+    assert isinstance(dlg, LinkDialog) and set(dlg.links()) == {"center"}
+    # type a literature offset with a tolerance; the fit chooses within it
+    dlg.set_values("center", 4.5, 0.2)
+    assert dlg.links()["center"] == ComponentLink(first, 4.5, 0.2)
+    dlg.deleteLater()
+    assert window.set_link_values(second, {"center": ComponentLink(first, 4.5, 0.2)})
+    app.processEvents()
+    state = window.session.state(key)
+    spec = next(s for s in state.result.specs if s.label == second)
+    assert spec.center_link == ComponentLink(first, 4.5, 0.2)
+    got = {m.label: m for m in state.result.majors()}
+    assert 4.3 - 1e-6 <= got[second].center - got[first].center <= 4.7 + 1e-6
+    # an impossible ratio is refused like in a recipe; unchanged values do not refit
+    assert not window.set_link_values(second, {"area": ComponentLink(first, 0.1, 0.2)})
+    assert "area ratio must stay above 0" in window.log_panel.toPlainText()
+    assert not window.set_link_values(second, {"center": ComponentLink(first, 4.5, 0.2)})

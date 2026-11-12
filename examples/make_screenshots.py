@@ -29,6 +29,7 @@ from xps_autofit.synthetic import (  # noqa: E402
     p3ht_c1s,
     p3ht_s2p,
     synthesize,
+    synthesize_valence_band,
 )
 
 
@@ -153,6 +154,39 @@ def main(out_dir: str | Path) -> list[Path]:
         win.tabs.setCurrentWidget(win.diagnostics)
         app.processEvents()
         p = out / "gui_compare.png"
+        win.grab().save(str(p))
+        written.append(p)
+
+        # 6b. Links: C 1s with the C-S/C-N and C-O widths tied to C-C/C-H (right-click
+        #     in the Components table); linked cells are in italics
+        keys = win.load_files([str(data / "p3ht_C1s.csv")])
+        win.use_recipe("p3ht")
+        win.select_key(keys[0])
+        win.auto_fit()
+        app.processEvents()
+        for label in ("C-S/C-N", "C-O"):
+            win.link_component(label, "width", "C-C/C-H")
+            app.processEvents()
+        win.tabs.setCurrentWidget(win.components)
+        app.processEvents()
+        p = out / "gui_links.png"
+        win.grab().save(str(p))
+        written.append(p)
+
+        # 6c. Valence-band maximum by linear extrapolation of the leading edge
+        vb, _ = synthesize_valence_band(vbm=1.5, seed=2, name="valence band")
+        vb_path = data / "oxide_valence_band.csv"
+        vb_path.write_text(
+            "Binding Energy (eV),Counts\n"
+            + "\n".join(f"{e:.3f},{int(c)}" for e, c in zip(vb.energy, vb.intensity))
+            + "\n",
+            encoding="utf-8",
+        )
+        keys = win.load_files([str(vb_path)])
+        win.select_key(keys[0])
+        win.valence_band_edge()
+        app.processEvents()
+        p = out / "gui_vbm.png"
         win.grab().save(str(p))
         written.append(p)
 

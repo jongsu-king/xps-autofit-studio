@@ -35,7 +35,13 @@ jobs:
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q --cov=xps_autofit --cov-report=term-missing
+        # Coverage tracing doubles the test time on Python 3.11 (measured locally:
+        # 45 s -> 92 s for the model-selection tests), so one job measures it and the
+        # others only run the tests.
+        run: >-
+          pytest -q
+          ${{ matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+          && '--cov=xps_autofit --cov-report=term-missing' || '' }}
       - name: Smoke test the CLI
         shell: bash
         run: |

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QPushButton,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.fitting import ComponentLink
 from ..readers import supported_extensions
 from ..recipes import builtin_recipe_names
 
@@ -467,3 +469,67 @@ class SeriesDialog(QDialog):
             buttons.addButton(to_csv, QDialogButtonBox.ButtonRole.ActionRole)
             buttons.addButton(to_origin, QDialogButtonBox.ButtonRole.ActionRole)
         lay.addWidget(buttons)
+
+
+class LinkDialog(QDialog):
+    """Offset / ratio and tolerance of a component's centre and area links (the
+    values a right-click link starts from are the current ones)."""
+
+    def __init__(
+        self, label: str, links: dict[str, ComponentLink], parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Links of {label}")
+        form = QFormLayout()
+        self._rows: dict[str, tuple[str, QDoubleSpinBox, QDoubleSpinBox]] = {}
+        for kind in ("center", "area"):
+            link = links.get(kind)
+            if link is None:
+                continue
+            value, tol = QDoubleSpinBox(), QDoubleSpinBox()
+            if kind == "center":
+                value.setRange(-100.0, 100.0)
+                tol.setRange(0.0, 20.0)
+                for box in (value, tol):
+                    box.setDecimals(3)
+                    box.setSingleStep(0.05)
+                    box.setSuffix(" eV")
+                caption = f"Centre = {link.target} +"
+            else:
+                value.setRange(0.0001, 10000.0)
+                tol.setRange(0.0, 10000.0)
+                for box in (value, tol):
+                    box.setDecimals(4)
+                    box.setSingleStep(0.01)
+                caption = f"Area = {link.target} x"
+            value.setValue(link.value)
+            tol.setValue(link.tolerance)
+            tol.setSpecialValueText("fixed")
+            form.addRow(caption, value)
+            form.addRow("free within +/-", tol)
+            self._rows[kind] = (link.target, value, tol)
+        note = QLabel(
+            "A tolerance of 0 fixes the offset or ratio; otherwise the fit chooses it "
+            "within the range."
+        )
+        note.setWordWrap(True)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(note)
+        lay.addWidget(buttons)
+
+    def set_values(self, kind: str, value: float, tolerance: float) -> None:
+        _target, v, t = self._rows[kind]
+        v.setValue(value)
+        t.setValue(tolerance)
+
+    def links(self) -> dict[str, ComponentLink]:
+        return {
+            kind: ComponentLink(target, float(v.value()), float(t.value()))
+            for kind, (target, v, t) in self._rows.items()
+        }

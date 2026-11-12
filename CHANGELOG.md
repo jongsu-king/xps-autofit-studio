@@ -78,6 +78,11 @@ All notable changes to this project are documented here. The format follows
   resolution the VBM comes back within 0.03 eV; at 0.9 eV it reads 0.03-0.08 eV low
   (`algorithm.md`, section 13).
 
+- *Edit link values…* in the Components table's context menu: type a centre offset
+  or area ratio and the tolerance within which the fit may choose it.
+- Documentation screenshots of linked components and of the valence-band maximum
+  (`examples/make_screenshots.py`).
+
 ### Fixed
 - Model selection no longer drops a component count because its lowest chi-square
   start fails a physical check while another start of the same model passes: the
@@ -87,6 +92,9 @@ All notable changes to this project are documented here. The format follows
   components, 1.08 and grade B; over 12 seeds the right count went from 10 to 12.
 
 ### Changed
+- CI measures coverage in one job (ubuntu, Python 3.12) instead of all nine:
+  coverage tracing doubled the test time on Python 3.11 (45 s -> 92 s for the
+  model-selection tests locally), and the Windows / 3.11 job had reached 70 minutes.
 - VAMAS spectrum names no longer repeat the region when the block identifier already
   names it (`P3HT C 1s`, not `P3HT C 1s C 1s`); the report's page titles follow the
   same rule. Session files from earlier versions keep their saved names.

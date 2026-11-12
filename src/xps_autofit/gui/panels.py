@@ -673,6 +673,7 @@ ASSIGNMENT_COLUMN = 12
 """Reference chemical state nearest to the centre (database, +/- 0.5 eV tolerance)."""
 LOCK_COLUMNS = {10: "vary_center", 11: "vary_width"}
 """Check-box columns: a tick fixes the centre / the widths of that component."""
+LINK_TITLES = {"center": "centre", "area": "area", "width": "widths"}
 LINKED_COLUMNS = {"center": (1,), "area": (4,), "width": (3, 7, 8, 9)}
 """Cells shown in italics (not editable) when the component's centre, area or widths
 follow another component."""
@@ -685,6 +686,8 @@ class ComponentsTable(CopyableTable):
     componentLinked = Signal(str, str, str)
     """Parent label, link kind (``center`` / ``area`` / ``width``, or ``""`` for all) and
     target label (``""`` removes the link)."""
+    linkEditRequested = Signal(str)
+    """Parent label whose centre / area link values should be edited."""
 
     EDITABLE_COLUMNS = (0, 1, 7, 8)  # name, centre, FWHM G, FWHM L (major lines only)
 
@@ -708,9 +711,8 @@ class ComponentsTable(CopyableTable):
         component at the current offset / ratio, or remove its links."""
         menu = QMenu(self)
         others = [lab for lab in self._labels if lab != parent_label]
-        titles = {"center": "Link centre to", "area": "Link area to", "width": "Link widths to"}
         for kind in LINK_KINDS:
-            sub = menu.addMenu(titles[kind])
+            sub = menu.addMenu(f"Link {LINK_TITLES[kind]} to")
             sub.setEnabled(bool(others))
             for other in others:
                 act = sub.addAction(other)
@@ -719,9 +721,12 @@ class ComponentsTable(CopyableTable):
                 )
         links = self._links.get(parent_label, {})
         menu.addSeparator()
+        edit = menu.addAction("Edit link values…")
+        edit.setEnabled("center" in links or "area" in links)
+        edit.triggered.connect(lambda: self.linkEditRequested.emit(parent_label))
         for kind in LINK_KINDS:
             if kind in links:
-                act = menu.addAction(f"Remove {kind} link ({links[kind]})")
+                act = menu.addAction(f"Remove {LINK_TITLES[kind]} link ({links[kind]})")
                 act.triggered.connect(
                     lambda _=False, k=kind: self.componentLinked.emit(parent_label, k, "")
                 )

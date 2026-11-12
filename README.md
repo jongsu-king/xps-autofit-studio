@@ -390,7 +390,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (277 tests, about eight minutes). Comparisons with real instrument
+Run `pytest` to execute them (278 tests, about eight minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 

@@ -16,6 +16,7 @@ from PySide6.QtCore import QDateTime, QSettings, Qt, QThread, QTimer, QUrl, Sign
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QInputDialog,
@@ -76,7 +77,14 @@ from ..update_check import (
     disabled_by_environment,
 )
 from .compat import pyside_refcount_warning
-from .dialogs import BatchDialog, ExportDialog, PlotOptionsDialog, SeriesDialog, TableDialog
+from .dialogs import (
+    BatchDialog,
+    ExportDialog,
+    LinkDialog,
+    PlotOptionsDialog,
+    SeriesDialog,
+    TableDialog,
+)
 from .panels import (
     ComponentsTable,
     CompositionPanel,
@@ -243,6 +251,7 @@ class MainWindow(QMainWindow):
         self.components.componentEdited.connect(self._on_component_edited)
         self.components.componentLocked.connect(self._on_component_locked)
         self.components.componentLinked.connect(self.link_component)
+        self.components.linkEditRequested.connect(self.edit_links_dialog)
         self.components.componentRenamed.connect(self.rename_component)
         self.models.modelPicked.connect(self._show_model)
         self.settings.recipe_combo.currentIndexChanged.connect(self._on_recipe_combo)
@@ -1715,6 +1724,50 @@ class MainWindow(QMainWindow):
             self.log(f"{label}: {exc}")
             return False
         self.log(f"{label}: {kind} linked to {link.describe(kind)}")
+        return self.refit(specs)
+
+    def edit_links_dialog(self, label: str) -> LinkDialog | None:
+        """Right-click > Edit link values…: type the offset / ratio of a centre or area
+        link and the tolerance within which the fit may choose it."""
+        cur = self.current()
+        state = self.session.results.get(cur[0]) if cur is not None else None
+        if state is None or state.result is None:
+            return None
+        spec = next((s for s in state.result.specs if s.label == label), None)
+        links = {k: v for k, v in (spec.links() if spec else {}).items() if k != "width"}
+        if not links:
+            self.log(f"{label}: no centre or area link to edit (right-click > Link … to)")
+            return None
+        dlg = LinkDialog(label, links, self)
+        if not self.runner.synchronous and dlg.exec() == QDialog.DialogCode.Accepted:
+            self.set_link_values(label, dlg.links())
+        return dlg
+
+    def set_link_values(self, label: str, links: dict[str, ComponentLink]) -> bool:
+        """Replace links of component ``label`` (validated like a recipe's) and refit."""
+        cur = self.current()
+        if cur is None:
+            return False
+        pair = self._manual_specs(cur[0])
+        if pair is None:
+            return False
+        _state, specs = pair
+        spec = next((s for s in specs if s.label == label), None)
+        if spec is None:
+            return False
+        try:
+            checked = {
+                k: ComponentLink.parse(k, v.to_list(k), owner=label) for k, v in links.items()
+            }
+            previous = spec.links()
+            spec.set_links(dict(checked))
+            check_link_cycles(specs)
+        except FitError as exc:
+            self.log(f"{label}: {exc}")
+            return False
+        if all(previous.get(k) == v for k, v in checked.items()):
+            return False
+        self.log(f"{label}: " + "; ".join(f"{k} = {v.describe(k)}" for k, v in checked.items()))
         return self.refit(specs)
 
     def _on_component_edited(self, label: str, field: str, value: float) -> None:

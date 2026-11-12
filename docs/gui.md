@@ -146,6 +146,8 @@ region with some baseline below the edge (to about -2 eV); a range that starts o
 the edge is refused with a message. `xps-autofit vbm` does the same from the
 command line, with explicit windows and an Origin-style figure.
 
+![Valence-band maximum of a synthetic oxide valence band](images/gui_vbm.png)
+
 ## Composition series
 
 **Analysis > Composition series…** (Ctrl+Shift+T) collects the composition of every
@@ -221,12 +223,17 @@ Right-click a component for **Link centre to / Link area to / Link widths to**:
 the centre then follows the chosen component at the current offset, the area at
 the current ratio, the widths (FWHM G and L, mixing, asymmetry) exactly. Linked
 cells are shown in italics, are not editable, and carry the link in their tooltip
-(`= C-C/C-H + 1.600 eV`); the same menu removes one link or all of them. A link
-that would close a cycle is refused. Renaming the target keeps the link, removing
+(`= C-C/C-H + 1.600 eV`); the same menu removes one link or all of them.
+**Edit link values…** types the offset or ratio instead (a literature value, say)
+and a tolerance within which the fit may choose it (0 keeps it fixed); an impossible
+value (a ratio that could reach zero) is refused like in a recipe. A link that
+would close a cycle is refused. Renaming the target keeps the link, removing
 it drops the links to it. Links are written like the locks (project and session
 files, the `links` column of the component table); *save settings as recipe* with
 the fitted components writes them into the candidates, and a recipe can give them a
 tolerance (`recipes.md`, "Links between components").
+
+![C 1s with the C-S/C-N and C-O widths linked to C-C/C-H (italic cells)](images/gui_links.png)
 
 ## Saving the settings as a recipe
 
