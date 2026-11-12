@@ -44,6 +44,7 @@ from ..core.preprocessing import C1S_REFERENCE_WARNING
 from ..core.quantification import QuantCorrection
 from ..core.region import CandidateLine
 from ..core.uncertainty import BootstrapResult, bootstrap
+from ..database.binding_energies import suggest_assignments
 from ..database.rsf_library import RsfLibrary, RsfLibraryError, load_rsf_library
 from ..export.origin import (
     ORIGIN_COMPONENTS_SUFFIX,
@@ -342,6 +343,12 @@ class MainWindow(QMainWindow):
         self.act_reset_view = QAction("Reset view", self)
         self.act_reset_view.setShortcut("Home")
         self.act_reset_view.triggered.connect(self.plot.reset_view)
+        self.act_report = QAction("Export report (PDF)…", self)
+        self.act_report.setShortcut("Ctrl+Alt+R")
+        self.act_report.setToolTip(
+            "One PDF for the current file: summary, composition and a page per fitted region"
+        )
+        self.act_report.triggered.connect(self.export_report_dialog)
         self.act_export_origin = QAction("Export for Origin…", self)
         self.act_export_origin.setShortcut("Ctrl+Alt+E")
         self.act_export_origin.setToolTip(
@@ -433,6 +440,7 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         m_file.addAction(self.act_export)
         m_file.addAction(self.act_export_origin)
+        m_file.addAction(self.act_report)
         m_file.addAction(self.act_save_plot)
         m_file.addSeparator()
         quit_action = QAction("Quit", self)
@@ -2029,6 +2037,75 @@ class MainWindow(QMainWindow):
         self.log(f"composition series: {p}")
         if open_after:
             (opener or open_in_origin)(p)
+        return p
+
+    # ------------------------------------------------------------------ report
+    def export_report_dialog(self) -> None:
+        cur = self.current()
+        if cur is None:
+            self.log("select a spectrum of the file to report on")
+            return
+        default = Path(str(self.settings_store.value("export_dir", str(Path.home()))))
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export report",
+            str(default / f"{cur[1].path.stem}_report.pdf"),
+            "PDF (*.pdf)",
+        )
+        if path:
+            self.export_report(path)
+
+    def export_report(self, path: str | Path) -> Path | None:
+        """PDF of the current file: every fitted region of it and its composition."""
+        from ..export.report import ReportRegion, write_report
+
+        cur = self.current()
+        if cur is None:
+            self.log("select a spectrum of the file to report on")
+            return None
+        key, item = cur
+        regions: list[ReportRegion] = []
+        for k in self.session.siblings(key):
+            st = self.session.results.get(k)
+            if st is None or st.result is None or st.selection is None:
+                continue
+            sel = st.as_selection()
+            best = sel.best if sel is not None else None
+            region = st.selection.region
+            assignments = {}
+            for c in st.result.majors():
+                found = suggest_assignments(region.element, region.line, c.center)
+                if found:
+                    assignments[c.label] = f"{found[0]['species']} ({found[0]['energy']:.1f})"
+            regions.append(
+                ReportRegion(
+                    name=region.name,
+                    result=st.result,
+                    status=st.status,
+                    variant=best.variant if best is not None else "",
+                    grade=best.grade.letter if best is not None and best.grade else None,
+                    spectrum_name=self.session.items[k].display_name,
+                    notes=list(st.notes),
+                    assignments=assignments,
+                )
+            )
+        if not regions:
+            self.log("nothing to report: fit the regions of this file first")
+            return None
+        recipe = self.session.recipe
+        p = Path(path)
+        if p.suffix.lower() != ".pdf":
+            p = p.with_suffix(".pdf")
+        write_report(
+            p,
+            regions,
+            self.session.composition(key),
+            sample=item.path.stem,
+            source=str(item.path),
+            recipe=recipe.name if recipe is not None else "manual settings",
+        )
+        self.settings_store.setValue("export_dir", str(p.parent))
+        self.log(f"report: {p} ({len(regions)} region(s))")
         return p
 
     # ------------------------------------------------------------------ Origin

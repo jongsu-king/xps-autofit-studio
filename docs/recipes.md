@@ -26,6 +26,8 @@ regions:
                                # mode: static (from the endpoints, fixed) | active
                                #       (Shirley/Tougaard generated from the fitted
                                #       peaks inside the fit) | auto
+                               # tougaard_cross_section: universal | polymer
+                               #       (or tougaard_C / tougaard_D, eV^2)
                                # scatter_window: 0.3 (active: keep the scattering
                                #       factor within k0/1.3 .. 1.3 k0 of the endpoint
                                #       estimate k0; null = free)
@@ -92,6 +94,20 @@ symmetric Voigt cannot follow. Both are described in `docs/algorithm.md`. The
 active scattering factor stays within `scatter_window` (default ±30 %) of the
 endpoint estimate; set `scatter_window: null` to free it when the endpoints are
 known to be unreliable.
+
+For polymers and other organic films, use the three-parameter Tougaard
+cross-section, whose loss is narrower and closer to the peak than the universal
+one (`algorithm.md`, section 1):
+
+```yaml
+    background: {type: tougaard, tougaard_cross_section: polymer}
+    # the same with explicit constants:
+    background: {type: tougaard, tougaard_C: 551.0, tougaard_D: 436.0}
+```
+
+The preset also applies to `type: auto`, which then tries Tougaard with that
+cross-section. On the command line, `--tougaard-cross-section polymer` sets it for
+an ad-hoc fit.
 
 `quantification` applies only to the composition: with instrument RSFs (Avantage,
 CasaXPS libraries) leave both exponents at 0, since those factors already contain

@@ -51,9 +51,13 @@ class SynthRegion:
     background_lo: float = 300.0
     background_hi: float = 600.0
     background: str = "shirley"
+    """``shirley``, ``linear``, ``tougaard`` (loss integral of the peaks with
+    ``tougaard_C`` / ``tougaard_D``) or anything else for a flat background."""
     element: str | None = None
     line: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    tougaard_C: float = 1643.0
+    tougaard_D: float | None = None
 
 
 def shirley_like_background(x: np.ndarray, signal: np.ndarray, lo: float, hi: float) -> np.ndarray:
@@ -83,6 +87,11 @@ def synthesize(
             )
     if region.background == "shirley":
         bg = shirley_like_background(x, signal, region.background_lo, region.background_hi)
+    elif region.background == "tougaard":
+        from .core.background import tougaard_kernel
+
+        k = tougaard_kernel(x, region.tougaard_C, region.tougaard_D) @ signal
+        bg = region.background_lo + (region.background_hi - region.background_lo) * k / k[-1]
     elif region.background == "linear":
         bg = region.background_lo + (region.background_hi - region.background_lo) * (x - x[0]) / (
             x[-1] - x[0]

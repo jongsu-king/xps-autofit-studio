@@ -33,8 +33,9 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--formats",
         default="csv,json,png",
-        help="comma list of csv,xlsx,json,png,svg,pdf,origin (origin: CSV that Origin opens "
-        "as a labelled workbook)",
+        help="comma list of csv,xlsx,json,png,svg,pdf,origin,report (origin: CSV that Origin "
+        "opens as a labelled workbook; report: one PDF per file with summary, composition "
+        "and a page per region)",
     )
     p.add_argument("--region", action="append", help="only these recipe regions (repeatable)")
     p.add_argument(
@@ -73,6 +74,13 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--background", choices=["none", "linear", "shirley", "tougaard", "auto"], default="shirley"
+    )
+    p.add_argument(
+        "--tougaard-cross-section",
+        choices=["universal", "polymer"],
+        default="universal",
+        help="Tougaard loss function: universal (metals, inorganic) or polymer "
+        "(three-parameter, C=551, D=436 eV^2)",
     )
     p.add_argument(
         "--background-mode",
@@ -262,7 +270,13 @@ def _adhoc_recipe(args: argparse.Namespace) -> Recipe:
         element=args.element,
         line=args.line,
         range=tuple(args.range) if args.range else None,
-        background=BackgroundSpec(type=args.background, mode=args.background_mode),
+        background=BackgroundSpec.from_dict(
+            {
+                "type": args.background,
+                "mode": args.background_mode,
+                "tougaard_cross_section": args.tougaard_cross_section,
+            }
+        ),
         refine_background=not args.no_refine_background,
         shape=args.shape,
         optimizer=args.optimizer,

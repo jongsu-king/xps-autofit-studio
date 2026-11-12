@@ -17,6 +17,16 @@ BACKGROUND_TYPES = ("none", "linear", "shirley", "tougaard")
 BACKGROUND_MODES = ("static", "active")
 #: Types for which an *active* (fitted together with the peaks) version exists.
 ACTIVE_TYPES = ("shirley", "tougaard")
+
+TOUGAARD_CROSS_SECTIONS: dict[str, tuple[float, float | None]] = {
+    "universal": (1643.0, None),
+    "polymer": (551.0, 436.0),
+}
+"""Tougaard inelastic cross-sections ``(C, D)`` in eV**2.  ``universal`` is the
+two-parameter ``F(T) = B T / (C + T**2)**2`` for metals and many inorganic solids;
+``polymer`` is the three-parameter ``F(T) = B T / ((C - T**2)**2 + D T**2)`` of
+Tougaard's polymer class (S. Tougaard, Surf. Interface Anal. 25 (1997) 137), whose
+loss peaks at higher energy loss and is narrower."""
 #: Default relative window of the active scattering factor around its static estimate
 #: (see :attr:`BackgroundSpec.scatter_window`); ``None`` leaves it free.
 DEFAULT_SCATTER_WINDOW: float | None = 0.3
@@ -47,9 +57,13 @@ class BackgroundSpec:
         intensities.
     max_iterations, tolerance
         Shirley iteration control.  ``tolerance`` is relative to the step height.
-    tougaard_B, tougaard_C
-        Universal cross-section parameters ``F(T) = B*T / (C + T**2)**2`` (eV**2).
-        ``tougaard_B=None`` scales ``B`` so the background meets the high-BE endpoint.
+    tougaard_B, tougaard_C, tougaard_D
+        Tougaard cross-section parameters (eV**2).  Without ``tougaard_D`` the
+        two-parameter universal form ``F(T) = B*T / (C + T**2)**2``; with it the
+        three-parameter form ``F(T) = B*T / ((C - T**2)**2 + D*T**2)`` (polymers:
+        ``C = 551, D = 436``; see :data:`TOUGAARD_CROSS_SECTIONS`).  In a recipe,
+        ``tougaard_cross_section: polymer`` sets both.  ``tougaard_B=None`` scales
+        ``B`` so the background meets the high-BE endpoint.
     scatter_window
         Active mode only.  The scattering factor ``k`` is kept within
         ``[k0 / (1 + w), k0 * (1 + w)]`` around the static estimate ``k0`` (the
@@ -64,6 +78,7 @@ class BackgroundSpec:
     tolerance: float = 1e-6
     tougaard_B: float | None = None
     tougaard_C: float = 1643.0
+    tougaard_D: float | None = None
     mode: str = "static"
     scatter_window: float | None = DEFAULT_SCATTER_WINDOW
 
@@ -76,6 +91,18 @@ class BackgroundSpec:
             raise BackgroundError("endpoint_points must be >= 1")
         if self.scatter_window is not None and self.scatter_window <= 0:
             raise BackgroundError("scatter_window must be positive or None (free)")
+        if self.tougaard_C <= 0:
+            raise BackgroundError("tougaard_C must be positive (eV^2)")
+        if self.tougaard_D is not None and self.tougaard_D < 0:
+            raise BackgroundError("tougaard_D must be >= 0 (eV^2) or None (universal form)")
+
+    @property
+    def tougaard_cross_section(self) -> str:
+        """``"universal"``, ``"polymer"`` or ``"custom"`` for the current C and D."""
+        for name, (c, d) in TOUGAARD_CROSS_SECTIONS.items():
+            if self.tougaard_C == c and self.tougaard_D == d:
+                return name
+        return "custom"
 
     @property
     def is_active(self) -> bool:
@@ -91,6 +118,7 @@ class BackgroundSpec:
             "tolerance": self.tolerance,
             "tougaard_B": self.tougaard_B,
             "tougaard_C": self.tougaard_C,
+            "tougaard_D": self.tougaard_D,
             "scatter_window": self.scatter_window,
         }
 
@@ -100,6 +128,14 @@ class BackgroundSpec:
             return cls()
         if isinstance(d, str):
             return cls(type=d)
+        d = dict(d)
+        preset = d.pop("tougaard_cross_section", None)
+        if preset is not None:
+            if preset not in TOUGAARD_CROSS_SECTIONS:
+                raise BackgroundError(
+                    f"tougaard_cross_section must be one of {sorted(TOUGAARD_CROSS_SECTIONS)}"
+                )
+            d["tougaard_C"], d["tougaard_D"] = TOUGAARD_CROSS_SECTIONS[preset]
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
@@ -184,11 +220,13 @@ def shirley_background(
     return bg, info
 
 
-def tougaard_kernel(x: np.ndarray, C: float = 1643.0) -> np.ndarray:
-    """Matrix ``K[i, k] = F(x_i - x_k) * dx_k`` of the universal loss function, so that
-    ``K @ signal`` is the Tougaard integral of ``signal`` (unit ``B``)."""
+def tougaard_kernel(x: np.ndarray, C: float = 1643.0, D: float | None = None) -> np.ndarray:
+    """Matrix ``K[i, k] = F(x_i - x_k) * dx_k`` of the loss function, so that ``K @ signal``
+    is the Tougaard integral of ``signal`` (unit ``B``).  ``D=None``: universal
+    two-parameter form; otherwise the three-parameter form."""
     t = x[:, None] - x[None, :]
-    kernel = np.where(t > 0, t / (C + t**2) ** 2, 0.0)
+    denom = (C + t**2) ** 2 if D is None else (C - t**2) ** 2 + D * t**2
+    kernel = np.where(t > 0, t / np.where(t > 0, denom, 1.0), 0.0)
     return kernel * np.gradient(x)[None, :]
 
 
@@ -203,19 +241,21 @@ def tougaard_background(
     endpoint_points: int = 3,
     B: float | None = None,
     C: float = 1643.0,
+    D: float | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Tougaard background with the two-parameter universal cross-section.
+    """Tougaard background (universal form, or the three-parameter form with ``D``).
 
     ``B(E) = I_lo + B * sum_{E' < E} F(E - E') * (I(E') - I_lo) * dE'`` with
-    ``F(T) = T / (C + T**2)**2``.  When ``B`` is ``None`` it is scaled so the background
+    ``F(T) = T / (C + T**2)**2`` (universal) or ``F(T) = T / ((C - T**2)**2 + D * T**2)``
+    (three-parameter, e.g. polymers).  When ``B`` is ``None`` it is scaled so the background
     meets the averaged high-BE endpoint, which is the usual practical choice when the
     loss region beyond the scanned range is unavailable.
     """
     _check(x, y)
     lo, hi = _endpoints(y, endpoint_points)
     j = y - lo
-    k = tougaard_kernel(x, C) @ j
-    info: dict[str, Any] = {"I_low_BE": lo, "I_high_BE": hi, "C": C}
+    k = tougaard_kernel(x, C, D) @ j
+    info: dict[str, Any] = {"I_low_BE": lo, "I_high_BE": hi, "C": C, "D": D}
     n = int(max(1, min(endpoint_points, x.size // 2)))
     k_end = float(np.mean(k[-n:]))
     if B is None:
@@ -256,7 +296,9 @@ def compute_background(x: np.ndarray, y: np.ndarray, spec: BackgroundSpec) -> Ba
             q_total = float(cumulative_trapezoid(signal, x, initial=0.0)[-1])
             info["scatter"] = float(info["step_height"] / q_total) if q_total > 0 else 0.0
         return BackgroundResult(bg, spec, info, warnings)
-    bg, info = tougaard_background(x, y, spec.endpoint_points, spec.tougaard_B, spec.tougaard_C)
+    bg, info = tougaard_background(
+        x, y, spec.endpoint_points, spec.tougaard_B, spec.tougaard_C, spec.tougaard_D
+    )
     if spec.is_active:
         info["scatter"] = float(info.get("B", 0.0))
     return BackgroundResult(bg, spec, info, warnings)

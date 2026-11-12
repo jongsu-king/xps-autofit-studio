@@ -65,7 +65,7 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | | |
 |---|---|
 | **Input** | CSV / TXT / TSV / DAT / XY exports (sniffed delimiter, header-based column choice, decimal commas, descending axes, kinetic-energy columns), Excel workbooks `.xlsx` / `.xlsm` (one sheet per region, one column per sample, side-by-side pairs, vendor exports with background / envelope / peak columns) and ISO 14976 VAMAS `.vms` |
-| **Backgrounds** | Linear, Shirley, Tougaard; *static* (endpoints, optional free linear refinement) or *active* (generated from the fitted envelope with free offset and a scattering factor bounded around the endpoint estimate); `auto` tries them all |
+| **Backgrounds** | Linear, Shirley, Tougaard (universal or three-parameter polymer cross-section); *static* (endpoints, optional free linear refinement) or *active* (generated from the fitted envelope with free offset and a scattering factor bounded around the endpoint estimate); `auto` tries them all |
 | **Line shapes** | Gaussian, Lorentzian, Voigt, pseudo-Voigt (sum, SGL), GL product (CasaXPS `GL(p)`), asymmetric Doniach-Šunjić (metals), area-normalised; `auto` chooses |
 | **Constraints** | Spin-orbit doublets as one component (splitting, area ratio, shared widths), width bounds, shared widths, candidate windows for chemical states, minimum separation |
 | **Model selection** | AICc / BIC among models that pass the physical checks, parsimony margin, residual diagnostics (Durbin-Watson, runs test, lag-1), multi-start and optional differential-evolution search |
@@ -74,8 +74,8 @@ If this saves you an afternoon, a star on the repository helps other XPS users f
 | **Uncertainties** | Covariance errors; Poisson or residual bootstrap of areas, centres, widths, fractions, propagated to atomic percentages |
 | **Survey identification** | 62 elements, 164 lines (photoelectron and Auger); confidence, matched/missing lines, ambiguities, charge-shift correction; a rough composition from the survey itself (`identify --quantify`); `suggest` turns the result into a recipe (regions around the measured lines, database doublets, Scofield RSFs, C 1s charge reference) |
 | **Quantification** | Relative composition from RSFs (Scofield table or recipe values), optional escape-depth / transmission exponents, `NOT_CALCULABLE` when a factor is missing, modified Auger parameter for Cu; composition series over many samples (depth profiles, ageing series) as a table, a figure and an Origin file; instrument RSF libraries (CSV / YAML, `--rsf-library`) with the source of every factor recorded |
-| **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), CSV that OriginLab Origin opens as a labelled workbook (`--formats origin`, *Export for Origin* in the app, opened in Origin when it is installed), per-run summaries; `verify` reproduces a project |
-| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), fixable centres and widths per component, chemical-state suggestions per component, plot options (title, labels, fonts, ranges), "save settings as recipe", bootstrap, batch, export, element identification with recipe suggestion, session files, update notice |
+| **Outputs** | CSV, XLSX, JSON project, PNG/SVG/PDF figures in an Origin-style publication look (or the classic look), CSV that OriginLab Origin opens as a labelled workbook (`--formats origin`, *Export for Origin* in the app, opened in Origin when it is installed), a PDF report per file (summary, composition, one page per region; `--formats report`), per-run summaries; `verify` reproduces a project |
+| **Desktop app** | Instrument-style PySide6/PyQtGraph window in a dark or light theme: sample tree, live plot with draggable centre lines (Origin-style publication look or a theme-following instrument style), settings panel, Components / Models / Diagnostics / Composition tabs, FIT ALL, charge alignment, undo/redo, editable titles and names, comparison view (overlay, normalise, stack), fixable centres and widths per component, chemical-state suggestions per component, plot options (title, labels, fonts, ranges), "save settings as recipe", bootstrap, batch, export, PDF report, element identification with recipe suggestion, session files, update notice |
 | **Installers** | Windows setup + zip, macOS DMG (Apple Silicon), Debian/Ubuntu `.deb` + tar.gz, built and smoke-tested on every release |
 
 ## Install
@@ -286,6 +286,12 @@ For each file and region (`<file>__<region>`):
   (Long Name, Units, Comments): drop the file onto OriginLab Origin, or open it
   there, and the workbook comes up with named columns and units, ready to plot
 
+Per file with `--formats report`: `<file>_report.pdf` - a summary page (file, recipe,
+version and date, every region with status, component count, background / shape,
+reduced chi-square and grade, the composition with the source of each RSF) and one
+page per fitted region (figure, component table with suggested chemical states,
+selection notes).
+
 Per run: `summary_regions.csv` (with `grade`, `quality_score`, `durbin_watson`,
 `max_correlation`), `summary_components.csv`, `summary_quantification.csv` (and
 `summary.xlsx`). When two or more files have a composition: `summary_series.csv`
@@ -323,7 +329,9 @@ software. Readers for additional formats can be registered with
 
 - peak-shape normalisation and FWHM, including the Doniach-Šunjić line and the
   recovery of its asymmetry from a synthetic metallic line
-- Shirley recovery of a Shirley-type background; Tougaard endpoint behaviour;
+- Shirley recovery of a Shirley-type background; Tougaard endpoint behaviour; the
+  polymer cross-section recovering S 2p areas within 2 % on a polymer-type loss
+  background where the universal one is at least twice as far off;
   active Shirley and Tougaard recovering offset and scattering factor
 - recovery of centre, area and FWHM of single and overlapping Voigt peaks
 - shoulder detection, residual diagnostics and the residual tie-break
@@ -337,7 +345,8 @@ software. Readers for additional formats can be registered with
   correction arithmetic and its recipe round trip
 - the desktop application offscreen: loading, fitting, FIT ALL, dragging, editing,
   renaming, undo/redo, charge alignment, composition, comparison view, bootstrap,
-  export, batch, identification, the update notice, the light and dark themes and
+  export, the PDF report, the Tougaard cross-section selector, batch,
+  identification, the update notice, the light and dark themes and
   the Origin-style / instrument plot styles (box axes, inward ticks, colours,
   persistence, redraw of the current fit)
 - preservation of S 2p splitting and area ratio; correct component count on fresh
@@ -370,7 +379,7 @@ software. Readers for additional formats can be registered with
 - the desktop application headless (fits, drag refit, bootstrap, identification,
   update notice, settings round trips)
 
-Run `pytest` to execute them (256 tests, about eight minutes). Comparisons with real instrument
+Run `pytest` to execute them (261 tests, about eight minutes). Comparisons with real instrument
 data and with other programs are part of the v1.0 plan and have not been done yet;
 if you can share measured spectra for that, please open a discussion.
 
@@ -403,14 +412,14 @@ to the latest version, and each release has its own DOI (0.6.0:
 
 ## 한국어 요약
 
-XPS 스펙트럼(CSV·TXT·VAMAS·엑셀 .xlsx)을 불러와 배경 제거(Linear·Shirley·Tougaard, 피크와 함께 피팅하는
+XPS 스펙트럼(CSV·TXT·VAMAS·엑셀 .xlsx)을 불러와 배경 제거(Linear·Shirley·Tougaard, 고분자용 3-매개변수 Tougaard 단면적과 피크와 함께 피팅하는
 능동 배경 포함), Voigt 계열과 금속용 비대칭 Doniach-Šunjić 피팅, 스핀-궤도
 이중선 제약, AICc/BIC와 물리 검사·잔차 진단(Durbin-Watson)을 함께 쓰는 자동
 모델 선택, 강건 손실과 스파이크 마스크, 파라미터 상관 경고, 피팅마다 매기는
 품질 등급(A–E), 부트스트랩 불확도가 붙은 조성 계산(탈출 깊이·투과 함수 보정
 선택), 서베이 스펙트럼의 원소 식별과 서베이만으로 구한 대략적 조성, 여러 시료(깊이
 프로파일·시료 시리즈)의 조성 표와 그래프, CasaXPS식 GL(p) 곱 선형, 논문용 그림과
-재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는 도구입니다. 같은
+파일별 PDF 보고서, 재현 가능한 프로젝트 파일 저장까지 명령 한 줄로 수행하는 도구입니다. 같은
 레시피를 여러 시료에 적용해 피크 수를 임의로 늘리지 않고 비교할 수 있습니다.
 `xps-autofit gui`는 계측 장비 소프트웨어 형태의 데스크톱 화면(다크·라이트
 테마, Origin 풍 출판용 그래프 또는 장비 스타일 그래프 선택)으로, 피크

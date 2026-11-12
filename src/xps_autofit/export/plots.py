@@ -177,14 +177,33 @@ def _plot_fit(
     style: str,
 ) -> Figure:
     look = _ORIGIN if style == "origin" else _CLASSIC
-    # Fonts are set on the artists too, not only through rcParams: a figure returned
-    # without saving is drawn after the rc context has ended.
-    family = origin_font_family() if style == "origin" else None
-    font: dict[str, Any] = {"fontfamily": family} if family else {}
     fig, (ax, axr) = plt.subplots(
         2, 1, figsize=figsize, sharex=True, gridspec_kw={"height_ratios": [4, 1], "hspace": 0.05}
     )
     fig.patch.set_facecolor(look.surface)
+    draw_fit(fig, ax, axr, result, title, show_background, annotate, style)
+    if path is not None:
+        fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=look.surface)
+        plt.close(fig)
+    return fig
+
+
+def draw_fit(
+    fig: Figure,
+    ax: Any,
+    axr: Any,
+    result: FitResult,
+    title: str = "",
+    show_background: bool = True,
+    annotate: bool = True,
+    style: str = DEFAULT_FIGURE_STYLE,
+) -> None:
+    """Draw a fit into existing axes (``ax`` data, ``axr`` residual, sharing x)."""
+    look = _ORIGIN if style == "origin" else _CLASSIC
+    # Fonts are set on the artists too, not only through rcParams: a figure returned
+    # without saving is drawn after the rc context has ended.
+    family = origin_font_family() if style == "origin" else None
+    font: dict[str, Any] = {"fontfamily": family} if family else {}
     for a in (ax, axr):
         _style_axes(a, style, look.surface)
         if family:
@@ -270,10 +289,6 @@ def _plot_fit(
     axr.set_xlabel("Binding energy (eV)", fontsize=9, color=look.text, **font)
     axr.invert_xaxis()
     fig.align_ylabels([ax, axr])
-    if path is not None:
-        fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=look.surface)
-        plt.close(fig)
-    return fig
 
 
 def _unit_label(result: FitResult) -> str:

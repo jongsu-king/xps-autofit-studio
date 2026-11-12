@@ -8,6 +8,7 @@ scans, any technique.  Not supported: non-empty parameter inclusion/exclusion li
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -277,6 +278,21 @@ def _intensity_unit(label: str, units: str, values: np.ndarray, signal_mode: str
     return "arbitrary"
 
 
+def _block_name(identifier: str, species: str, transition: str) -> str:
+    """Block identifier plus species and transition, unless the identifier names them.
+
+    Instruments often write the region into the identifier already ("P3HT C 1s"); the
+    name then stays "P3HT C 1s" instead of "P3HT C 1s C 1s".
+    """
+    ident = (identifier or "").strip()
+    label = " ".join(t for t in (species, transition) if t).strip()
+    if not label:
+        return ident
+    if re.search(rf"(?<![\w]){re.escape(label)}(?![\w])", ident, re.IGNORECASE):
+        return ident
+    return f"{ident} {label}".strip()
+
+
 def block_to_spectrum(block: VamasBlock, header: VamasHeader, variable: int = 0) -> Spectrum:
     x = block.abscissa()
     y = block.ordinate(variable)
@@ -291,7 +307,7 @@ def block_to_spectrum(block: VamasBlock, header: VamasHeader, variable: int = 0)
         variable + (1 if block.extra.get("scan_mode") == "IRREGULAR" else 0)
     ]
     unit = _intensity_unit(var_label, var_units, y, block.signal_mode)
-    name = " ".join(t for t in (block.identifier, block.species, block.transition) if t).strip()
+    name = _block_name(block.identifier, block.species, block.transition)
     meta: dict[str, Any] = {
         "format": "VAMAS",
         "institution": header.institution,

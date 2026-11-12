@@ -350,3 +350,43 @@ def test_assignment_column_and_rsf_library_in_the_app(window, app, data_dir, tmp
             window.settings_store.remove("quant/rsf_library")
         else:
             window.settings_store.setValue("quant/rsf_library", saved)
+
+
+def test_report_and_tougaard_selector_in_the_app(window, app, data_dir, tmp_path):
+    panel = window.settings
+    assert not panel.tougaard_cs.isEnabled()
+    panel.background.setCurrentText("tougaard")
+    assert panel.tougaard_cs.isEnabled()
+    panel.tougaard_cs.setCurrentText("polymer")
+    from xps_autofit.synthetic import p3ht_s2p, synthesize
+
+    spec, _ = synthesize(p3ht_s2p(False), seed=1)
+    bg = panel.region_spec(spec).background
+    assert (bg.tougaard_C, bg.tougaard_D) == (551.0, 436.0)
+    # a recipe's own constants show as "custom" and survive the round trip
+    from dataclasses import replace
+
+    from xps_autofit.core.background import BackgroundSpec
+
+    custom = replace(
+        panel.region_spec(spec),
+        background=BackgroundSpec(type="tougaard", tougaard_C=800.0, tougaard_D=100.0),
+    )
+    panel.load_region(custom)
+    assert panel.tougaard_cs.currentText() == "custom"
+    again = panel.region_spec(spec).background
+    assert (again.tougaard_C, again.tougaard_D) == (800.0, 100.0)
+    panel.background.setCurrentText("shirley")
+    # nothing loaded or fitted: no report
+    assert window.export_report(tmp_path / "none.pdf") is None
+    assert not (tmp_path / "none.pdf").exists()
+    keys = window.load_files([str(data_dir / "p3ht_aged_multi.vms")])
+    window.use_recipe("p3ht")
+    window.select_key(keys[0])
+    window.fit_all(keys)
+    app.processEvents()
+    path = window.export_report(tmp_path / "report")
+    assert path is not None and path.suffix == ".pdf" and path.exists()
+    raw = path.read_bytes()
+    assert raw.count(b"/Type /Page") - raw.count(b"/Type /Pages") == 3
+    assert "report:" in window.log_panel.toPlainText()

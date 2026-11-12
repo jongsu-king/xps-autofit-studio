@@ -32,6 +32,7 @@ from ..core.background import (
     BACKGROUND_MODES,
     BACKGROUND_TYPES,
     DEFAULT_SCATTER_WINDOW,
+    TOUGAARD_CROSS_SECTIONS,
     BackgroundSpec,
 )
 from ..core.constraints import DoubletSpec, PeakConstraints
@@ -341,10 +342,23 @@ class FitSettingsPanel(QWidget):
             lambda text: self.scatter_window.setEnabled(text in ("active", "auto"))
         )
         self.scatter_window.setEnabled(False)
+        self.tougaard_cs = QComboBox()
+        self.tougaard_cs.addItems(list(TOUGAARD_CROSS_SECTIONS))
+        self.tougaard_cs.setToolTip(
+            "Tougaard loss function: universal (metals, most inorganic solids) or\n"
+            "polymer (three-parameter, C = 551, D = 436 eV^2; narrower loss).\n"
+            "Choose by material: the fit statistics barely separate the two."
+        )
+        self.background.currentTextChanged.connect(
+            lambda text: self.tougaard_cs.setEnabled(text in ("tougaard", "auto"))
+        )
+        self.tougaard_cs.setEnabled(False)
+        self._tougaard_custom: tuple[float, float | None] | None = None
         f.addRow("Type", self.background)
         f.addRow("Mode", self.bg_mode)
         f.addRow("Endpoint points", self.endpoints)
         f.addRow("Scatter window", self.scatter_window)
+        f.addRow("Tougaard", self.tougaard_cs)
         f.addRow("", self.refine)
         outer.addWidget(g_bg)
 
@@ -538,6 +552,12 @@ class FitSettingsPanel(QWidget):
         self.bg_mode.setCurrentText(region.background.mode)
         self.endpoints.setValue(region.background.endpoint_points)
         self.scatter_window.setValue(region.background.scatter_window or 0.0)
+        cs = region.background.tougaard_cross_section
+        if cs == "custom":
+            if self.tougaard_cs.findText("custom") < 0:
+                self.tougaard_cs.addItem("custom")
+            self._tougaard_custom = (region.background.tougaard_C, region.background.tougaard_D)
+        self.tougaard_cs.setCurrentText(cs)
         self.refine.setChecked(region.refine_background)
         self.shape.setCurrentText(region.shape)
         self.min_n.setValue(region.min_components)
@@ -564,6 +584,12 @@ class FitSettingsPanel(QWidget):
         self.mask_spikes.setChecked(region.spike_sigma is not None)
         if region.spike_sigma is not None:
             self.spike_sigma.setValue(region.spike_sigma)
+
+    def _tougaard_values(self) -> tuple[float, float | None]:
+        name = self.tougaard_cs.currentText()
+        if name in TOUGAARD_CROSS_SECTIONS:
+            return TOUGAARD_CROSS_SECTIONS[name]
+        return self._tougaard_custom or TOUGAARD_CROSS_SECTIONS["universal"]
 
     def region_spec(self, spectrum: Spectrum) -> RegionSpec:
         """RegionSpec from the panel; candidates/RSF come from the selected recipe region."""
@@ -603,6 +629,8 @@ class FitSettingsPanel(QWidget):
                 endpoint_points=self.endpoints.value(),
                 mode=self.bg_mode.currentText(),
                 scatter_window=self.scatter_window.value() or None,
+                tougaard_C=self._tougaard_values()[0],
+                tougaard_D=self._tougaard_values()[1],
             ),
             refine_background=self.refine.isChecked(),
             shape=self.shape.currentText(),

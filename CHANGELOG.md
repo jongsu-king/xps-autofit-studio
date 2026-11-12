@@ -37,6 +37,30 @@ All notable changes to this project are documented here. The format follows
   (+/- 0.5 eV), with every match and its distance in the tooltip.
 - The synthetic generator can make asymmetric (Doniach-Sunjic) lines
   (`SynthComponent.shape`, `asym`; `au4f_metal()`).
+- **Three-parameter Tougaard cross-section** for polymers and other materials with a
+  narrow loss: `F(T) = B T / ((C - T^2)^2 + D T^2)`, `C = 551`, `D = 436 eV^2`
+  (Tougaard 1997), next to the universal `C = 1643 eV^2`. Recipes take
+  `tougaard_cross_section: universal | polymer` or explicit `tougaard_C` /
+  `tougaard_D`; the command line has `--tougaard-cross-section` for ad-hoc fits; the
+  app's settings panel has a *Tougaard* selector (a recipe's own constants show as
+  *custom*). Static and active Tougaard backgrounds both use it, and so does the
+  synthetic generator (`background="tougaard"`). On synthetic S 2p with a
+  polymer-type loss the polymer form gave the areas back within 0.5 %, the
+  universal one within 3.8-4.5 %; reduced chi-square did not tell them apart, so
+  the choice stays with the user (`algorithm.md`, section 1).
+- **PDF report** (`export/report.py`): one PDF per file with a summary page (file,
+  recipe, version and date, each region's status, component count, background /
+  shape, reduced chi-square and grade, the composition with RSF sources) and one
+  page per fitted region (figure in the export look, component table with the
+  suggested chemical state, selection notes). `--formats report` writes
+  `<file>_report.pdf`; the app has *File > Export report (PDF)…* (Ctrl+Alt+R).
+- `export.plots.draw_fit` draws a fit into given axes, so the report and the figure
+  exports share one drawing.
+
+### Changed
+- VAMAS spectrum names no longer repeat the region when the block identifier already
+  names it (`P3HT C 1s`, not `P3HT C 1s C 1s`); the report's page titles follow the
+  same rule. Session files from earlier versions keep their saved names.
 
 ### Not adopted
 - The Doniach-Sunjic line as a candidate of `shape: auto` for metals: its tail

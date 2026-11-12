@@ -3,7 +3,13 @@ import pytest
 
 from xps_autofit.readers import read_spectra, register_reader, supported_extensions
 from xps_autofit.readers.csv_reader import TextReadError, read_text
-from xps_autofit.readers.vamas_reader import VamasError, parse_vamas, read_vamas, write_vamas
+from xps_autofit.readers.vamas_reader import (
+    VamasError,
+    _block_name,
+    parse_vamas,
+    read_vamas,
+    write_vamas,
+)
 from xps_autofit.synthetic import p3ht_s2p, synthesize
 
 
@@ -115,6 +121,14 @@ def test_vamas_roundtrip(tmp_path, spec):
     s = read_vamas(p2)[0]
     assert s.axis == "binding" and np.allclose(s.energy, spec.energy, atol=1e-5)
     assert any(h["step"] == "kinetic_to_binding" for h in s.history)
+
+
+def test_vamas_names_do_not_repeat_the_region():
+    assert _block_name("P3HT C 1s", "C", "1s") == "P3HT C 1s"
+    assert _block_name("aged film, s 2P", "S", "2p") == "aged film, s 2P"
+    assert _block_name("Sample 3", "Cu", "2p3/2") == "Sample 3 Cu 2p3/2"
+    assert _block_name("XS 2px", "S", "2p") == "XS 2px S 2p", "only whole words count"
+    assert _block_name("", "O", "1s") == "O 1s" and _block_name("Survey", "", "") == "Survey"
 
 
 HAND_WRITTEN = """VAMAS Surface Chemical Analysis Standard Data Transfer Format 1988 May 4

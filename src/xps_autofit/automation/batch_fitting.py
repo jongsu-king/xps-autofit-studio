@@ -111,6 +111,8 @@ class FileReport:
     charge_shift_eV: float | None = None
     quantification: QuantResult | None = None
     messages: list[str] = field(default_factory=list)
+    report_pdf: str | None = None
+    """PDF report of the file (``formats`` with ``report``)."""
 
 
 @dataclass
@@ -326,7 +328,46 @@ def fit_file(path: str | Path, recipe: Recipe, options: RunOptions) -> FileRepor
             report.quantification.note += f"; {library.describe()}"
         if quant_samples:
             atomic_percent_samples(report.quantification, quant_samples)
+    if "report" in options.formats:
+        report.report_pdf = str(_write_file_report(path, report, recipe, options))
     return report
+
+
+def _write_file_report(path: Path, report: FileReport, recipe: Recipe, options: RunOptions) -> Path:
+    from ..export.report import ReportRegion, write_report
+
+    regions = []
+    for rr in report.regions:
+        sel = rr.selection
+        if sel is None or sel.best is None:
+            continue
+        best = sel.best
+        regions.append(
+            ReportRegion(
+                name=rr.region,
+                result=best.result,
+                status=rr.status,
+                variant=best.variant,
+                grade=best.grade.letter if best.grade else None,
+                spectrum_name=sel.spectrum.name,
+                notes=list(sel.notes),
+                assignments={
+                    label: f"{found[0]['species']} ({found[0]['energy']:.1f})"
+                    for label, found in rr.assignments.items()
+                    if found
+                },
+            )
+        )
+    out = Path(options.output_dir) / f"{path.stem}_report.pdf"
+    return write_report(
+        out,
+        regions,
+        report.quantification,
+        sample=report.sample,
+        source=str(path),
+        recipe=recipe.name,
+        style=options.figure_style,
+    )
 
 
 def write_region_outputs(

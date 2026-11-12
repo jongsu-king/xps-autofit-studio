@@ -23,7 +23,9 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
 2. Pick a **Recipe**; the region matching the selected spectrum is chosen
    automatically and its settings fill the panel. Without a recipe the panel is an
    ad-hoc region: set element/line (the doublet is filled from the database), range,
-   background type and **mode** (static / active / auto), shape (including the
+   background type and **mode** (static / active / auto), the **Tougaard**
+   cross-section (universal, or polymer for organic films; a recipe's own constants
+   show as *custom*), shape (including the
    asymmetric `doniach_sunjic` line with its asymmetry bound), component count and
    width bounds.
 3. **AUTO FIT** (F5) runs the full model selection in a background thread. The plot
@@ -73,6 +75,12 @@ AMBIGUOUS / NEEDS REVIEW / FAILED / MANUAL FIT).
    the program is found (`Program Files\OriginLab`, or the path in the
    `XPS_AUTOFIT_ORIGIN` environment variable); otherwise it opens in the default
    program and can be dragged into Origin.
+   **Export report (PDF)…** (Ctrl+Alt+R) writes one PDF for the file of the
+   selected spectrum: a first page with the file, recipe, version and date, every
+   fitted region (status, component count, background / shape, reduced
+   chi-square, grade) and the composition with the source of each sensitivity
+   factor, then one page per region with the figure, the component table
+   (including the suggested chemical state) and the selection notes.
    **Save plot image…** (Ctrl+Shift+S) saves the live view as PNG; **Copy table**
    (Ctrl+Shift+C, or Ctrl+C inside a table) puts the current table on the clipboard
    as tab-separated text for a spreadsheet.

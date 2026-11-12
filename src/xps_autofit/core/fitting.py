@@ -510,7 +510,8 @@ class ModelContext:
         active = settings.background.type if settings.background.is_active else None
         kernel = None
         if active == "tougaard":
-            kernel = tougaard_kernel(x, settings.background.tougaard_C)
+            bgs = settings.background
+            kernel = tougaard_kernel(x, bgs.tougaard_C, bgs.tougaard_D)
         return cls(
             x,
             specs,

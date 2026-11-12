@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from ..readers import supported_extensions
 from ..recipes import builtin_recipe_names
 
-FORMATS = ("csv", "xlsx", "json", "png", "svg", "pdf", "origin")
+FORMATS = ("csv", "xlsx", "json", "png", "svg", "pdf", "origin", "report")
 
 
 class _FolderField(QWidget):

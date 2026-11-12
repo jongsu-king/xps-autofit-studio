@@ -13,9 +13,25 @@ intensities (`endpoint_points`, default 3):
 - **shirley** - iterative; `B(E) = I_lo + (I_hi - I_lo) * Q(E) / Q_total`, where
   `Q(E)` integrates the background-subtracted signal from the low-BE end. The loop
   stops when the largest change falls below `tolerance * |I_hi - I_lo|`.
-- **tougaard** - universal cross-section `F(T) = B T / (C + T^2)^2`, `C = 1643 eV^2`,
-  convolved with the signal above the low-BE endpoint; `B` is scaled so the
-  background meets the high-BE endpoint unless given.
+- **tougaard** - inelastic loss cross-section convolved with the signal above the
+  low-BE endpoint; `B` is scaled so the background meets the high-BE endpoint
+  unless given. Two cross-sections are built in (`tougaard_cross_section`):
+  - `universal` (default): `F(T) = B T / (C + T^2)^2`, `C = 1643 eV^2`, for metals
+    and most inorganic solids; the loss peaks near 23 eV and is about 49 eV wide.
+  - `polymer`: the three-parameter form `F(T) = B T / ((C - T^2)^2 + D T^2)` with
+    `C = 551 eV^2`, `D = 436 eV^2` (Tougaard, *Surf. Interface Anal.* 25 (1997)
+    137), whose loss peaks near 21 eV and is only about 19 eV wide, as in
+    polymers and other materials with a narrow plasmon-like loss. Any `C` and `D`
+    can be given instead (`tougaard_C`, `tougaard_D`; without `D` the universal
+    form is used).
+
+  The choice is physical and is not made by the criterion. On synthetic S 2p with a
+  polymer-type loss background (static, free linear refinement, two doublets) the
+  polymer cross-section gave the doublet areas back within 0.0-0.5 % and the
+  universal one within 3.8-4.5 %; on C 1s the errors were 8.5-13.2 % against
+  13.3-17.3 %. Reduced chi-square was the same within noise in both cases, because
+  the free linear term absorbs most of the difference in shape over a short
+  window: the data alone do not tell the two apart, the material does.
 
 Endpoint-based backgrounds inherit two errors: Poisson noise in the endpoint
 average and the Lorentzian tails of the peaks themselves. Two remedies exist:
