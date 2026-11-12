@@ -415,6 +415,12 @@ class MainWindow(QMainWindow):
             "edge meets a line through the baseline below it"
         )
         self.act_vbm.triggered.connect(lambda: self.valence_band_edge())
+        self.act_vbm_figure = QAction("Save VBM figure…", self)
+        self.act_vbm_figure.setToolTip(
+            "The valence band with both lines and the VBM as an Origin-style figure "
+            "(PNG, SVG or PDF by the file extension)"
+        )
+        self.act_vbm_figure.triggered.connect(self.save_vbm_figure_dialog)
         self.act_suggest = QAction("Suggest recipe from survey…", self)
         self.act_suggest.setToolTip(
             "After IDENTIFY: write a recipe with one region per element (range, doublet, RSF)"
@@ -493,6 +499,7 @@ class MainWindow(QMainWindow):
             self.act_identify,
             self.act_suggest,
             self.act_vbm,
+            self.act_vbm_figure,
             self.act_series,
             self.act_rsf_library,
             self.act_clear_rsf_library,
@@ -2024,6 +2031,40 @@ class MainWindow(QMainWindow):
 
             QApplication.clipboard().setText(self.diagnostics.toPlainText())
             self.log("copied the diagnostics readout to the clipboard")
+
+    def save_vbm_figure_dialog(self) -> None:
+        cur = self.current()
+        if cur is None:
+            self.log("select a valence-band spectrum first")
+            return
+        default = Path(str(self.settings_store.value("export_dir", str(Path.home()))))
+        name = default / f"{Path(cur[1].path).stem}_vbm.png"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save VBM figure", str(name), "Images (*.png *.svg *.pdf)"
+        )
+        if path:
+            self.save_vbm_figure(path)
+
+    def save_vbm_figure(self, path: str | Path) -> Path | None:
+        """The selected spectrum's valence-band figure (the edge is found first when
+        it has not been yet); the format follows the extension (PNG if none)."""
+        cur = self.current()
+        if cur is None:
+            self.log("select a valence-band spectrum first")
+            return None
+        key, item = cur
+        edge = self.vb_edges.get(key) or self.valence_band_edge()
+        if edge is None:
+            return None
+        from ..export.plots import plot_vb_edge
+
+        p = Path(path)
+        if p.suffix.lower() not in (".png", ".svg", ".pdf"):
+            p = p.with_suffix(".png")
+        plot_vb_edge(item.spectrum, edge, p, title=item.display_name)
+        self.settings_store.setValue("export_dir", str(p.parent))
+        self.log(f"VBM figure: {p}")
+        return p
 
     def save_plot_dialog(self) -> None:
         cur = self.current()

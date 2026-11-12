@@ -148,7 +148,8 @@ region with some baseline below the edge (to about -2 eV); a range that starts o
 the edge is refused with a message. `xps-autofit vbm` does the same from the
 command line, with explicit windows and an Origin-style figure. When the recipe in
 use has a `report: vbm` region covering the spectrum, its range and edge window
-are used (the log says so), as in a batch run.
+are used (the log says so), as in a batch run. **Save VBM figure…** writes the
+Origin-style figure (PNG, SVG or PDF by the extension).
 
 ![Valence-band maximum of a synthetic oxide valence band](images/gui_vbm.png)
 

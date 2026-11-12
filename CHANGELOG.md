@@ -83,7 +83,8 @@ All notable changes to this project are documented here. The format follows
   `vbm_edge_eV`) with a figure per file; the app's VBM action uses such a region of
   the recipe in use. `report` is now checked (`auger_max` or `vbm`). The file's PDF
   report (`--formats report`, *Export report*) gets a valence-band table on the
-  summary page and a page per VBM (`export.plots.draw_vb_edge`).
+  summary page and a page per VBM (`export.plots.draw_vb_edge`). *Analysis > Save VBM
+  figure…* in the app writes the figure (PNG, SVG or PDF).
 
 - *Edit link values…* in the Components table's context menu: type a centre offset
   or area ratio and the tolerance within which the fit may choose it.

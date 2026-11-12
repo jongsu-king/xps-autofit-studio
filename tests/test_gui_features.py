@@ -178,6 +178,11 @@ def test_valence_band_edge_in_the_app(window, app, tmp_path):
     names = [item.name() for item in window.plot.main.listDataItems()]
     assert names == ["Raw", "Baseline", "Leading edge"]
     assert window.act_vbm.shortcut().toString() == "Ctrl+Shift+V"
+    # Save VBM figure…: the format follows the extension
+    svg = window.save_vbm_figure(tmp_path / "vb_fig.svg")
+    assert svg is not None and svg.read_text().startswith("<?xml")
+    assert window.save_vbm_figure(tmp_path / "vb_fig").suffix == ".png"
+    assert window.act_vbm_figure in window.menuBar().actions()[2].menu().actions()
     # the PDF report of the file carries the valence band (summary + one page)
     pdf = window.export_report(tmp_path / "vb_report.pdf")
     raw = pdf.read_bytes()
